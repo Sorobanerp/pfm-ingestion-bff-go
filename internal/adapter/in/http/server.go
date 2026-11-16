@@ -14,26 +14,43 @@ import (
 	"strings"
 
 	"github.com/andybalholm/brotli"
+	"github.com/dantas-pfm/pfm-ingestion-bff-go/internal/adapter/out/sefaz"
 	"github.com/dantas-pfm/pfm-ingestion-bff-go/internal/application/port/in"
 	"github.com/dantas-pfm/pfm-ingestion-bff-go/internal/domain"
 )
 
 var reUUID = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
-// Server exposes the modern REST HTTP/2 & TLS/HTTP/3-ready BFF endpoints (`GET /health`, `POST /api/v1/statements/upload`)
-// with Brotli/Gzip response compression, strong `ETag` generation, `Alt-Svc` HTTP/3 advertisement,
-// and Zero-Trust `X-Tenant-ID` validation.
+type NfceReceiptScanRequest struct {
+	QrCodeURL      string `json:"qrCodeUrl"`
+	CardID         string `json:"cardId"`
+	PaymentMethod  string `json:"paymentMethod"`
+	IdempotencyKey string `json:"idempotencyKey"`
+}
+
+// Server exposes the modern REST HTTP/2 & TLS/HTTP/3-ready BFF endpoints (`GET /health`,
+// `POST /api/v1/statements/upload`, `POST /api/v1/receipts/nfce`) with Brotli/Gzip compression,
+// strong `ETag` generation, `Alt-Svc` HTTP/3 advertisement, and Zero-Trust `X-Tenant-ID` validation.
 type Server struct {
 	ingestUseCase in.IngestStatementUseCase
+	nfceScraper   *sefaz.SefazNfceScraper
 	mux           *http.ServeMux
 }
 
 func NewServer(ingestUseCase in.IngestStatementUseCase) *Server {
 	s := &Server{
 		ingestUseCase: ingestUseCase,
+		nfceScraper:   sefaz.NewSefazNfceScraper(nil),
 		mux:           http.NewServeMux(),
 	}
 	s.routes()
+	return s
+}
+
+func (s *Server) WithNfceScraper(scraper *sefaz.SefazNfceScraper) *Server {
+	if scraper != nil {
+		s.nfceScraper = scraper
+	}
 	return s
 }
 
@@ -44,6 +61,7 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /health", s.handleHealth)
 	s.mux.HandleFunc("POST /api/v1/statements/upload", s.handleStatementUpload)
+	s.mux.HandleFunc("POST /api/v1/receipts/nfce", s.handleNfceReceiptUpload)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -109,6 +127,44 @@ func (s *Server) handleStatementUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSONWithETagAndCompression(w, r, http.StatusOK, res)
+}
+
+func (s *Server) handleNfceReceiptUpload(w http.ResponseWriter, r *http.Request) {
+	tenantID := strings.TrimSpace(r.Header.Get("X-Tenant-ID"))
+	if tenantID == "" || !reUUID.MatchString(tenantID) {
+		writeJSONWithETagAndCompression(w, r, http.StatusUnauthorized, map[string]string{
+			"error": "missing or invalid X-Tenant-ID UUID header (Zero-Trust ADR-006)",
+		})
+		return
+	}
+
+	var req NfceReceiptScanRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64*1024)).Decode(&req); err != nil {
+		writeJSONWithETagAndCompression(w, r, http.StatusBadRequest, map[string]string{
+			"error": "invalid NFC-e JSON payload",
+		})
+		return
+	}
+
+	receipt, ledgerResp, err := s.nfceScraper.ScrapeAndForward(
+		r.Context(),
+		tenantID,
+		req.QrCodeURL,
+		req.CardID,
+		req.PaymentMethod,
+		req.IdempotencyKey,
+	)
+	if err != nil {
+		writeJSONWithETagAndCompression(w, r, http.StatusBadGateway, map[string]string{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	writeJSONWithETagAndCompression(w, r, http.StatusOK, map[string]any{
+		"scrapedReceipt": receipt,
+		"ledgerResult":   ledgerResp,
+	})
 }
 
 func (s *Server) withMiddlewares(next http.Handler) http.Handler {
