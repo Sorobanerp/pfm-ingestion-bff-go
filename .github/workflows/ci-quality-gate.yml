@@ -63,7 +63,7 @@ jobs:
       - name: Build da imagem Docker (Distroless)
         run: docker build -t pfm/pfm-ingestion-bff-go:${{ github.sha }} .
       - name: Trivy (CRITICAL,HIGH)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.33.1
         with:
           image-ref: pfm/pfm-ingestion-bff-go:${{ github.sha }}
           severity: CRITICAL,HIGH
