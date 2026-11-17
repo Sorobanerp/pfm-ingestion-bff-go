@@ -150,3 +150,114 @@ TOTAL_FATURA: R$ 500,00
 		}
 	}
 }
+
+func TestZeroPersistencePDFParser_EdgeCases(t *testing.T) {
+	parser := pdf.NewZeroPersistencePDFParser()
+	ctx := context.Background()
+
+	// Empty payload
+	_, err := parser.ParseStatementInRAM(ctx, "t1", domain.IssuerItau, "1234", "", nil)
+	if !errors.Is(err, pdf.ErrEmptyPayload) {
+		t.Fatalf("expected ErrEmptyPayload, got %v", err)
+	}
+
+	// Payload too large
+	oversized := make([]byte, pdf.MaxRAMStatementBytes+1)
+	_, err = parser.ParseStatementInRAM(ctx, "t1", domain.IssuerItau, "1234", "", oversized)
+	if !errors.Is(err, pdf.ErrPayloadTooLarge) {
+		t.Fatalf("expected ErrPayloadTooLarge, got %v", err)
+	}
+
+	// Password with dummy PDF prefix (exercises branch)
+	dummyPdf := []byte("%PDF-1.4 dummy encrypted content\nTOTAL_FATURA: R$ 0,00\n")
+	_, _ = parser.ParseStatementInRAM(ctx, "t1", domain.IssuerItau, "1234", "secretpass", dummyPdf)
+}
+
+func TestZeroPersistencePDFParser_AllTransactionKinds(t *testing.T) {
+	parser := pdf.NewZeroPersistencePDFParser()
+	raw := `
+REF: 2026-11
+VENCIMENTO: 2026-11-25
+TOTAL_FATURA: R$ 100,00
+2026-11-01 | CREDITO FATURA ANTERIOR | -20,00
+2026-11-02 | ANUIDADE DIFERENCIADA | 10,00
+2026-11-03 | IOF COMPRAS EXTERIOR | 5,00
+2026-11-04 | AVAL EMERG CREDITO | 15,00
+2026-11-05 | SEGURO FATURA PROTEGIDA | 10,00
+2026-11-06 | PROTECAO PREMIADA | 10,00
+2026-11-07 | COMPRA NORMAL PADRAO | 70,00
+`
+	stmt, err := parser.ParseStatementInRAM(
+		context.Background(),
+		"55555555-5555-4555-8555-555555555555",
+		domain.IssuerItau,
+		"1234",
+		"",
+		[]byte(raw),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(stmt.Transactions) != 7 {
+		t.Fatalf("expected 7 transactions, got %d", len(stmt.Transactions))
+	}
+}
+
+func TestZeroPersistencePDFParser_ThousandSeparators(t *testing.T) {
+	parser := pdf.NewZeroPersistencePDFParser()
+	raw := `
+REF: 2026-11
+VENCIMENTO: 2026-11-25
+TOTAL_FATURA: R$ 1.500,50
+2026-11-01 | VIAGEM INTERNACIONAL | 1.500,50
+`
+	stmt, err := parser.ParseStatementInRAM(
+		context.Background(),
+		"88888888-8888-4888-8888-888888888888",
+		domain.IssuerItau,
+		"1234",
+		"",
+		[]byte(raw),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if stmt.DeclaredTotal.Fixed4() != "1500.5000" {
+		t.Fatalf("expected 1500.5000, got %s", stmt.DeclaredTotal.Fixed4())
+	}
+}
+
+func TestZeroPersistencePDFParser_InvalidAmountAndMissingTotal(t *testing.T) {
+	parser := pdf.NewZeroPersistencePDFParser()
+	ctx := context.Background()
+
+	// Missing declared total
+	noTotal := `
+REF: 2026-11
+2026-11-01 | MERCADO | 50,00
+`
+	_, err := parser.ParseStatementInRAM(ctx, "t1", domain.IssuerItau, "1234", "", []byte(noTotal))
+	if err == nil {
+		t.Fatalf("expected error for missing total")
+	}
+
+	// Invalid line amount
+	badAmount := `
+TOTAL_FATURA: R$ 50,00
+2026-11-01 | MERCADO | NOT_A_NUMBER
+`
+	_, err = parser.ParseStatementInRAM(ctx, "t1", domain.IssuerItau, "1234", "", []byte(badAmount))
+	if err == nil {
+		t.Fatalf("expected error for invalid line amount")
+	}
+
+	// Invalid declared total
+	badDeclaredTotal := `
+TOTAL_FATURA: R$ NOT_A_NUMBER
+2026-11-01 | MERCADO | 50,00
+`
+	_, err = parser.ParseStatementInRAM(ctx, "t1", domain.IssuerItau, "1234", "", []byte(badDeclaredTotal))
+	if err == nil {
+		t.Fatalf("expected error for invalid declared total")
+	}
+}
