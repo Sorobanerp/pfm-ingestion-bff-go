@@ -242,9 +242,17 @@ func (s *Server) requireTenantID(w http.ResponseWriter, r *http.Request) (string
 
 func (s *Server) withMiddlewares(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Advertise HTTP/3 (QUIC) & HTTP/2 readiness per ADR-003
+		// Advertise HTTP/3 (QUIC) & HTTP/2 readiness per ADR-003 + CORS for pfm-web-nextjs (:3000)
 		w.Header().Set("Alt-Svc", `h3=":8443"; ma=86400, h2=":8443"; ma=86400`)
 		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept, X-Tenant-ID, If-None-Match, X-Statement-Issuer, X-Card-Last4, X-Statement-Password, X-Statement-Secret-Name, X-File-Name")
+		w.Header().Set("Access-Control-Expose-Headers", "ETag, Alt-Svc, Retry-After")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
 }

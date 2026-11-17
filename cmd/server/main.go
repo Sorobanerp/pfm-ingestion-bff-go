@@ -13,8 +13,10 @@ import (
 
 	httpin "github.com/dantas-pfm/pfm-ingestion-bff-go/internal/adapter/in/http"
 	"github.com/dantas-pfm/pfm-ingestion-bff-go/internal/adapter/out/aws"
+	grpcout "github.com/dantas-pfm/pfm-ingestion-bff-go/internal/adapter/out/grpc"
 	"github.com/dantas-pfm/pfm-ingestion-bff-go/internal/adapter/out/kafka"
 	"github.com/dantas-pfm/pfm-ingestion-bff-go/internal/adapter/out/pdf"
+	"github.com/dantas-pfm/pfm-ingestion-bff-go/internal/adapter/out/sefaz"
 	"github.com/dantas-pfm/pfm-ingestion-bff-go/internal/application/service"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -25,6 +27,8 @@ func main() {
 	localstackURL := envOrDefault("LOCALSTACK_ENDPOINT", aws.DefaultLocalStackEndpoint)
 	kafkaBrokers := strings.Split(envOrDefault("KAFKA_BROKERS", "localhost:9092"), ",")
 	coreLedgerGrpcTarget := envOrDefault("CORE_LEDGER_GRPC_ADDR", "localhost:9090")
+	coreLedgerHttpURL := envOrDefault("CORE_LEDGER_HTTP_URL", "http://localhost:9090")
+	forecastHttpURL := envOrDefault("FORECAST_ENGINE_HTTP_URL", "http://localhost:9091")
 
 	// Establish East-West gRPC client connection readiness (ADR-003)
 	grpcConn, err := grpc.NewClient(
@@ -49,7 +53,13 @@ func main() {
 		kafkaProducer,
 	)
 
-	httpServer := httpin.NewServer(ingestService)
+	eastWestClient := grpcout.NewEastWestGrpcBridgeClient(coreLedgerHttpURL, forecastHttpURL)
+	ledgerForwarder := sefaz.NewHttpGrpcBridgeForwarder(coreLedgerHttpURL)
+	nfceScraper := sefaz.NewSefazNfceScraper(ledgerForwarder)
+
+	httpServer := httpin.NewServer(ingestService).
+		WithEastWestClient(eastWestClient).
+		WithNfceScraper(nfceScraper)
 
 	srv := &http.Server{
 		Addr:              ":" + port,
