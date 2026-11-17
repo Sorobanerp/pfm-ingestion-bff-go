@@ -35,9 +35,8 @@ func (f *fakeKafkaWriter) Close() error {
 func TestHTTPServer_UploadStatementBrotliETagAndKafkaPartitioning(t *testing.T) {
 	t.Parallel()
 
-	// Mock LocalStack S3 server that fails once (testing Retry with backoff + jitter) then succeeds
 	var s3Calls atomic.Int32
-	mockLocalStack := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mockLocalStack := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		callNum := s3Calls.Add(1)
 		if callNum == 1 {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -64,7 +63,7 @@ func TestHTTPServer_UploadStatementBrotliETagAndKafkaPartitioning(t *testing.T) 
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
-	// 1. Test /health with ETag and 304 Not Modified
+	// 1. Test /health with ETag and Brotli
 	reqHealth, _ := http.NewRequest(http.MethodGet, ts.URL+"/health", nil)
 	reqHealth.Header.Set("Accept-Encoding", "br")
 	respHealth, err := http.DefaultClient.Do(reqHealth)
@@ -121,5 +120,77 @@ func TestHTTPServer_UploadStatementBrotliETagAndKafkaPartitioning(t *testing.T) 
 		if string(msg.Key) != tenantID {
 			t.Fatalf("expected Kafka message key to equal tenant_id %s, got %s", tenantID, string(msg.Key))
 		}
+	}
+}
+
+func TestHTTPServer_RateLimiterDashboardETag304AndContractSimulate(t *testing.T) {
+	t.Parallel()
+
+	pdfParser := pdf.NewZeroPersistencePDFParser()
+	svc := service.NewStatementIngestionService(pdfParser, nil, nil, nil)
+	// Allow at most 2 requests per minute per tenant
+	rl := httpin.NewTenantRateLimiter(2, time.Minute)
+	srv := httpin.NewServer(svc).WithRateLimiter(rl)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	tenantID := "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+
+	// 1. First call to GET /api/v1/dashboard -> 200 OK + ETag
+	reqDash, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/dashboard?scope=FAMILY", nil)
+	reqDash.Header.Set("X-Tenant-ID", tenantID)
+	respDash, err := http.DefaultClient.Do(reqDash)
+	if err != nil {
+		t.Fatalf("dashboard request failed: %v", err)
+	}
+	defer respDash.Body.Close()
+	if respDash.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK on dashboard, got %d", respDash.StatusCode)
+	}
+	etag := respDash.Header.Get("ETag")
+	if etag == "" {
+		t.Fatalf("expected ETag on dashboard response")
+	}
+
+	// 2. Second call with If-None-Match -> 304 Not Modified
+	reqDash304, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/dashboard?scope=FAMILY", nil)
+	reqDash304.Header.Set("X-Tenant-ID", tenantID)
+	reqDash304.Header.Set("If-None-Match", etag)
+	respDash304, err := http.DefaultClient.Do(reqDash304)
+	if err != nil {
+		t.Fatalf("dashboard 304 request failed: %v", err)
+	}
+	defer respDash304.Body.Close()
+	if respDash304.StatusCode != http.StatusNotModified {
+		t.Fatalf("expected 304 Not Modified, got %d", respDash304.StatusCode)
+	}
+
+	// 3. Third call for the same tenant exceeds maxRequests=2 -> 429 Too Many Requests + Retry-After
+	reqRateLimited, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/v1/dashboard?scope=FAMILY", nil)
+	reqRateLimited.Header.Set("X-Tenant-ID", tenantID)
+	respRateLimited, err := http.DefaultClient.Do(reqRateLimited)
+	if err != nil {
+		t.Fatalf("rate-limited request failed: %v", err)
+	}
+	defer respRateLimited.Body.Close()
+	if respRateLimited.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 Too Many Requests, got %d", respRateLimited.StatusCode)
+	}
+	if respRateLimited.Header.Get("Retry-After") != "60" {
+		t.Fatalf("expected Retry-After: 60 header")
+	}
+
+	// 4. Separate tenant is isolated and can call POST /api/v1/contracts/simulate
+	otherTenant := "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+	simPayload := `{"contract_id":"sac-01","amortization_system":"SAC","prepayment_strategy":"REDUCE_TERM","outstanding_balance":"300000.0000","remaining_installments":120,"extra_amortization_amount":"60000.0000"}`
+	reqSim, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/contracts/simulate", bytes.NewBufferString(simPayload))
+	reqSim.Header.Set("X-Tenant-ID", otherTenant)
+	respSim, err := http.DefaultClient.Do(reqSim)
+	if err != nil {
+		t.Fatalf("contract simulate request failed: %v", err)
+	}
+	defer respSim.Body.Close()
+	if respSim.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK on contract simulate, got %d", respSim.StatusCode)
 	}
 }

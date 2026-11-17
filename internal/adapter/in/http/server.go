@@ -12,8 +12,10 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/andybalholm/brotli"
+	grpcout "github.com/dantas-pfm/pfm-ingestion-bff-go/internal/adapter/out/grpc"
 	"github.com/dantas-pfm/pfm-ingestion-bff-go/internal/adapter/out/sefaz"
 	"github.com/dantas-pfm/pfm-ingestion-bff-go/internal/application/port/in"
 	"github.com/dantas-pfm/pfm-ingestion-bff-go/internal/domain"
@@ -29,19 +31,24 @@ type NfceReceiptScanRequest struct {
 }
 
 // Server exposes the modern REST HTTP/2 & TLS/HTTP/3-ready BFF endpoints (`GET /health`,
-// `POST /api/v1/statements/upload`, `POST /api/v1/receipts/nfce`) with Brotli/Gzip compression,
-// strong `ETag` generation, `Alt-Svc` HTTP/3 advertisement, and Zero-Trust `X-Tenant-ID` validation.
+// `POST /api/v1/statements/upload`, `POST /api/v1/receipts/nfce`, `GET /api/v1/dashboard`,
+// `POST /api/v1/contracts/simulate`) with Brotli/Gzip compression, strong `ETag` generation,
+// `Alt-Svc` HTTP/3 advertisement, per-tenant Rate Limiting, and Zero-Trust `X-Tenant-ID` validation.
 type Server struct {
-	ingestUseCase in.IngestStatementUseCase
-	nfceScraper   *sefaz.SefazNfceScraper
-	mux           *http.ServeMux
+	ingestUseCase  in.IngestStatementUseCase
+	nfceScraper    *sefaz.SefazNfceScraper
+	eastWestClient *grpcout.EastWestGrpcBridgeClient
+	rateLimiter    *TenantRateLimiter
+	mux            *http.ServeMux
 }
 
 func NewServer(ingestUseCase in.IngestStatementUseCase) *Server {
 	s := &Server{
-		ingestUseCase: ingestUseCase,
-		nfceScraper:   sefaz.NewSefazNfceScraper(nil),
-		mux:           http.NewServeMux(),
+		ingestUseCase:  ingestUseCase,
+		nfceScraper:    sefaz.NewSefazNfceScraper(nil),
+		eastWestClient: grpcout.NewEastWestGrpcBridgeClient("", ""),
+		rateLimiter:    NewTenantRateLimiter(120, time.Minute),
+		mux:            http.NewServeMux(),
 	}
 	s.routes()
 	return s
@@ -54,6 +61,20 @@ func (s *Server) WithNfceScraper(scraper *sefaz.SefazNfceScraper) *Server {
 	return s
 }
 
+func (s *Server) WithRateLimiter(rl *TenantRateLimiter) *Server {
+	if rl != nil {
+		s.rateLimiter = rl
+	}
+	return s
+}
+
+func (s *Server) WithEastWestClient(client *grpcout.EastWestGrpcBridgeClient) *Server {
+	if client != nil {
+		s.eastWestClient = client
+	}
+	return s
+}
+
 func (s *Server) Handler() http.Handler {
 	return s.withMiddlewares(s.mux)
 }
@@ -62,6 +83,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /health", s.handleHealth)
 	s.mux.HandleFunc("POST /api/v1/statements/upload", s.handleStatementUpload)
 	s.mux.HandleFunc("POST /api/v1/receipts/nfce", s.handleNfceReceiptUpload)
+	s.mux.HandleFunc("GET /api/v1/dashboard", s.handleDashboardSummary)
+	s.mux.HandleFunc("POST /api/v1/contracts/simulate", s.handleContractSimulate)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -73,12 +96,47 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSONWithETagAndCompression(w, r, http.StatusOK, payload)
 }
 
-func (s *Server) handleStatementUpload(w http.ResponseWriter, r *http.Request) {
-	tenantID := strings.TrimSpace(r.Header.Get("X-Tenant-ID"))
-	if tenantID == "" || !reUUID.MatchString(tenantID) {
-		writeJSONWithETagAndCompression(w, r, http.StatusUnauthorized, map[string]string{
-			"error": "missing or invalid X-Tenant-ID UUID header (Zero-Trust ADR-006)",
+func (s *Server) handleDashboardSummary(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := s.requireTenantID(w, r)
+	if !ok {
+		return
+	}
+	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
+	if scope == "" {
+		scope = "FAMILY"
+	}
+	summary, err := s.eastWestClient.FetchDashboardSummary(r.Context(), tenantID, scope)
+	if err != nil {
+		writeJSONWithETagAndCompression(w, r, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSONWithETagAndCompression(w, r, http.StatusOK, summary)
+}
+
+func (s *Server) handleContractSimulate(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := s.requireTenantID(w, r)
+	if !ok {
+		return
+	}
+	var req grpcout.ContractSimulateRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64*1024)).Decode(&req); err != nil {
+		writeJSONWithETagAndCompression(w, r, http.StatusBadRequest, map[string]string{
+			"error": "invalid contract simulation JSON payload",
 		})
+		return
+	}
+	req.TenantID = tenantID
+	out, err := s.eastWestClient.SimulateContract(r.Context(), req)
+	if err != nil {
+		writeJSONWithETagAndCompression(w, r, http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSONWithETagAndCompression(w, r, http.StatusOK, out)
+}
+
+func (s *Server) handleStatementUpload(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := s.requireTenantID(w, r)
+	if !ok {
 		return
 	}
 
@@ -130,11 +188,8 @@ func (s *Server) handleStatementUpload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleNfceReceiptUpload(w http.ResponseWriter, r *http.Request) {
-	tenantID := strings.TrimSpace(r.Header.Get("X-Tenant-ID"))
-	if tenantID == "" || !reUUID.MatchString(tenantID) {
-		writeJSONWithETagAndCompression(w, r, http.StatusUnauthorized, map[string]string{
-			"error": "missing or invalid X-Tenant-ID UUID header (Zero-Trust ADR-006)",
-		})
+	tenantID, ok := s.requireTenantID(w, r)
+	if !ok {
 		return
 	}
 
@@ -165,6 +220,24 @@ func (s *Server) handleNfceReceiptUpload(w http.ResponseWriter, r *http.Request)
 		"scrapedReceipt": receipt,
 		"ledgerResult":   ledgerResp,
 	})
+}
+
+func (s *Server) requireTenantID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	tenantID := strings.TrimSpace(r.Header.Get("X-Tenant-ID"))
+	if tenantID == "" || !reUUID.MatchString(tenantID) {
+		writeJSONWithETagAndCompression(w, r, http.StatusUnauthorized, map[string]string{
+			"error": "missing or invalid X-Tenant-ID UUID header (Zero-Trust ADR-006)",
+		})
+		return "", false
+	}
+	if s.rateLimiter != nil && !s.rateLimiter.Allow(tenantID) {
+		w.Header().Set("Retry-After", "60")
+		writeJSONWithETagAndCompression(w, r, http.StatusTooManyRequests, map[string]string{
+			"error": "tenant rate limit exceeded (ADR-008)",
+		})
+		return "", false
+	}
+	return tenantID, true
 }
 
 func (s *Server) withMiddlewares(next http.Handler) http.Handler {
