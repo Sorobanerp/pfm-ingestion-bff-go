@@ -23,12 +23,12 @@ import (
 )
 
 func main() {
-	port := envOrDefault("PORT", "8081")
-	localstackURL := envOrDefault("LOCALSTACK_ENDPOINT", aws.DefaultLocalStackEndpoint)
-	kafkaBrokers := strings.Split(envOrDefault("KAFKA_BROKERS", "localhost:9092"), ",")
-	coreLedgerGrpcTarget := envOrDefault("CORE_LEDGER_GRPC_ADDR", "localhost:9090")
-	coreLedgerHttpURL := envOrDefault("CORE_LEDGER_HTTP_URL", "http://localhost:9090")
-	forecastHttpURL := envOrDefault("FORECAST_ENGINE_HTTP_URL", "http://localhost:9091")
+	port := envOrDefault("SERVER_PORT", envOrDefault("PORT", "18100"))
+	localstackURL := envOrDefault("AWS_ENDPOINT_URL", envOrDefault("LOCALSTACK_ENDPOINT", aws.DefaultLocalStackEndpoint))
+	kafkaBrokers := strings.Split(envOrDefault("KAFKA_BROKERS", "localhost:19092"), ",")
+	coreLedgerGrpcTarget := envOrDefault("CORE_LEDGER_GRPC_ADDR", "localhost:18210")
+	coreLedgerHttpURL := envOrDefault("CORE_LEDGER_HTTP_URL", "http://localhost:18200")
+	forecastHttpURL := envOrDefault("FORECAST_ENGINE_HTTP_URL", "http://"+envOrDefault("FORECAST_GRPC_ADDR", "localhost:18110"))
 
 	// Establish East-West gRPC client connection readiness (ADR-003)
 	grpcConn, err := grpc.NewClient(

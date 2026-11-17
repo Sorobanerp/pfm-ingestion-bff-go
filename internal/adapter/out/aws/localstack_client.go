@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	DefaultLocalStackEndpoint = "http://localhost:4566"
+	DefaultLocalStackEndpoint = "http://localhost:14566"
 	DefaultAWSRegion          = "sa-east-1"
 	DefaultRequestTimeout     = 5 * time.Second
 )
@@ -58,7 +58,7 @@ func DefaultResiliencePolicy() ResiliencePolicy {
 }
 
 // ResilientLocalStackAdapter implements out.SecretVaultPort and out.ObjectStoragePort
-// pointing to LocalStack (`http://localhost:4566`) in local/dev environments and protected by
+// pointing to LocalStack (`http://localhost:14566`) in local/dev environments and protected by
 // 5s Timeout, Retry with Exponential Backoff + Jitter, and Circuit Breaker (ADR-004).
 type ResilientLocalStackAdapter struct {
 	endpoint   string

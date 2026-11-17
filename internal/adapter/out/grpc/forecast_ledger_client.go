@@ -30,7 +30,7 @@ type ContractSimulateRequest struct {
 	ExtraAmortizationAmount string `json:"extra_amortization_amount"`
 }
 
-// EastWestGrpcBridgeClient connects to Core Ledger (`localhost:9090`) and Forecast Engine (`localhost:9091`)
+// EastWestGrpcBridgeClient connects to Core Ledger (`localhost:18200`) and Forecast Engine (`localhost:18110`)
 // protected by Timeout (3s) and Circuit Breaker, using exact `shopspring/decimal` arithmetic (zero float64).
 type EastWestGrpcBridgeClient struct {
 	coreLedgerURL     string
