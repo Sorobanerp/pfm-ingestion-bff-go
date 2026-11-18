@@ -36,8 +36,9 @@ func run(ctx context.Context, getenv func(string) string) error {
 	localstackURL := envOrDefault(getenv, "AWS_ENDPOINT_URL", envOrDefault(getenv, "LOCALSTACK_ENDPOINT", aws.DefaultLocalStackEndpoint))
 	kafkaBrokers := strings.Split(envOrDefault(getenv, "KAFKA_BROKERS", "localhost:19092"), ",")
 	coreLedgerGrpcTarget := envOrDefault(getenv, "CORE_LEDGER_GRPC_ADDR", "localhost:18210")
-	coreLedgerHttpURL := envOrDefault(getenv, "CORE_LEDGER_HTTP_URL", "http://localhost:18200")
-	forecastHttpURL := envOrDefault(getenv, "FORECAST_ENGINE_HTTP_URL", "http://"+envOrDefault(getenv, "FORECAST_GRPC_ADDR", "localhost:18110"))
+	eastWestScheme := envOrDefault(getenv, "EAST_WEST_SCHEME", "http")
+	coreLedgerHttpURL := envOrDefault(getenv, "CORE_LEDGER_HTTP_URL", eastWestScheme+"://localhost:18200")
+	forecastHttpURL := envOrDefault(getenv, "FORECAST_ENGINE_HTTP_URL", eastWestScheme+"://"+envOrDefault(getenv, "FORECAST_GRPC_ADDR", "localhost:18110"))
 
 	// Establish East-West gRPC client connection readiness (ADR-003)
 	grpcConn, err := grpc.NewClient(
@@ -93,7 +94,7 @@ func run(ctx context.Context, getenv func(string) string) error {
 	case <-ctx.Done():
 	}
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	return srv.Shutdown(shutdownCtx)
 }
