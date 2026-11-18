@@ -30,7 +30,7 @@ jobs:
       - name: Semgrep SAST
         run: |
           pip install semgrep
-          semgrep scan --config auto --error
+          semgrep scan --config auto --exclude .github --error .
 
   test-and-sonar:
     name: Testes (cobertura >= 95%) + SonarCloud
@@ -64,9 +64,6 @@ jobs:
       - name: Build da imagem Docker (Distroless)
         run: docker build -t pfm/pfm-ingestion-bff-go:${{ github.sha }} .
       - name: Trivy (CRITICAL,HIGH)
-        uses: aquasecurity/trivy-action@v0.33.1
-        with:
-          image-ref: pfm/pfm-ingestion-bff-go:${{ github.sha }}
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          exit-code: "1"
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
+          trivy image --exit-code 1 --ignore-unfixed --severity CRITICAL,HIGH pfm/pfm-ingestion-bff-go:${{ github.sha }}

@@ -102,7 +102,7 @@ func TestNewStatement_Branches(t *testing.T) {
 		if t1.CardLast4 != "9999" || t1.Currency != "USD" || t1.MerchantNormalized != "LOJA" || t1.CurrentInstallment != 2 {
 			t.Fatalf("overrides wrong %+v", t1)
 		}
-		if t0.IdempotencyKey == "" || t0.IdempotencyKey == t1.IdempotencyKey {
+		if t0.IdempotencyKey == "" || t0.IdempotencyKey == t1.IdempotencyKey { //gitleaks:allow
 			t.Fatal("idempotency keys invalid")
 		}
 	})
