@@ -18,6 +18,7 @@ import (
 	"github.com/dantas-pfm/pfm-ingestion-bff-go/internal/adapter/out/pdf"
 	"github.com/dantas-pfm/pfm-ingestion-bff-go/internal/adapter/out/sefaz"
 	"github.com/dantas-pfm/pfm-ingestion-bff-go/internal/application/service"
+	"github.com/dantas-pfm/pfm-ingestion-bff-go/internal/observability"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -32,6 +33,7 @@ func main() {
 }
 
 func run(ctx context.Context, getenv func(string) string) error {
+	_ = observability.InitOtlpConfig(getenv, "pfm-ingestion-bff-go")
 	port := envOrDefault(getenv, "SERVER_PORT", envOrDefault(getenv, "PORT", "18100"))
 	localstackURL := envOrDefault(getenv, "AWS_ENDPOINT_URL", envOrDefault(getenv, "LOCALSTACK_ENDPOINT", aws.DefaultLocalStackEndpoint))
 	kafkaBrokers := strings.Split(envOrDefault(getenv, "KAFKA_BROKERS", "localhost:19092"), ",")
