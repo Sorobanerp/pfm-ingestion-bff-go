@@ -23,12 +23,22 @@ import (
 )
 
 func main() {
-	port := envOrDefault("SERVER_PORT", envOrDefault("PORT", "18100"))
-	localstackURL := envOrDefault("AWS_ENDPOINT_URL", envOrDefault("LOCALSTACK_ENDPOINT", aws.DefaultLocalStackEndpoint))
-	kafkaBrokers := strings.Split(envOrDefault("KAFKA_BROKERS", "localhost:19092"), ",")
-	coreLedgerGrpcTarget := envOrDefault("CORE_LEDGER_GRPC_ADDR", "localhost:18210")
-	coreLedgerHttpURL := envOrDefault("CORE_LEDGER_HTTP_URL", "http://localhost:18200")
-	forecastHttpURL := envOrDefault("FORECAST_ENGINE_HTTP_URL", "http://"+envOrDefault("FORECAST_GRPC_ADDR", "localhost:18110"))
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := run(ctx, os.Getenv); err != nil {
+		log.Fatalf("server error: %v", err)
+	}
+}
+
+func run(ctx context.Context, getenv func(string) string) error {
+	port := envOrDefault(getenv, "SERVER_PORT", envOrDefault(getenv, "PORT", "18100"))
+	localstackURL := envOrDefault(getenv, "AWS_ENDPOINT_URL", envOrDefault(getenv, "LOCALSTACK_ENDPOINT", aws.DefaultLocalStackEndpoint))
+	kafkaBrokers := strings.Split(envOrDefault(getenv, "KAFKA_BROKERS", "localhost:19092"), ",")
+	coreLedgerGrpcTarget := envOrDefault(getenv, "CORE_LEDGER_GRPC_ADDR", "localhost:18210")
+	eastWestScheme := envOrDefault(getenv, "EAST_WEST_SCHEME", "http")
+	coreLedgerHttpURL := envOrDefault(getenv, "CORE_LEDGER_HTTP_URL", eastWestScheme+"://localhost:18200")
+	forecastHttpURL := envOrDefault(getenv, "FORECAST_ENGINE_HTTP_URL", eastWestScheme+"://"+envOrDefault(getenv, "FORECAST_GRPC_ADDR", "localhost:18110"))
 
 	// Establish East-West gRPC client connection readiness (ADR-003)
 	grpcConn, err := grpc.NewClient(
@@ -70,24 +80,27 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
+	errCh := make(chan error, 1)
 	go func() {
 		log.Printf("pfm-ingestion-bff-go listening on :%s (HTTP/2 & HTTP/3-Ready)", port)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("server error: %v", err)
+			errCh <- err
 		}
 	}()
 
-	<-ctx.Done()
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	_ = srv.Shutdown(shutdownCtx)
+	return srv.Shutdown(shutdownCtx)
 }
 
-func envOrDefault(key, fallback string) string {
-	if val := strings.TrimSpace(os.Getenv(key)); val != "" {
+func envOrDefault(getenv func(string) string, key, fallback string) string {
+	if val := strings.TrimSpace(getenv(key)); val != "" {
 		return val
 	}
 	return fallback
