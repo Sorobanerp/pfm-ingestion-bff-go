@@ -95,3 +95,26 @@ func TestStatementEventProducer_NilWriterClose(t *testing.T) {
 	err := p.Close()
 	assert.NoError(t, err)
 }
+
+func TestNewUpstashStatementEventProducer_SASLSSL(t *testing.T) {
+	p, err := NewUpstashStatementEventProducer(KafkaConfig{
+		Brokers:    []string{"upstash-broker.upstash.io:9092"},
+		Username:   "upstash-user",
+		Password:   "upstash-pass",
+		UseSASLSSL: true,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, p)
+	require.NoError(t, p.Close())
+
+	_, errEmpty := NewUpstashStatementEventProducer(KafkaConfig{})
+	assert.Error(t, errEmpty)
+
+	t.Setenv("KAFKA_SECURITY_PROTOCOL", "SASL_SSL")
+	t.Setenv("KAFKA_SASL_USERNAME", "env-user")
+	t.Setenv("KAFKA_SASL_PASSWORD", "env-pass")
+	pEnv, errEnv := NewStatementEventProducerFromEnv([]string{"upstash-broker.upstash.io:9092"})
+	require.NoError(t, errEnv)
+	require.NotNil(t, pEnv)
+	require.NoError(t, pEnv.Close())
+}

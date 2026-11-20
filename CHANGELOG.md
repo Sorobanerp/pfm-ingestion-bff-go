@@ -7,6 +7,8 @@ Todas as alterações notáveis neste repositório são documentadas neste arqui
 ## [Unreleased]
 
 ### Added
+- Suporte ao adaptador **Upstash Kafka Serverless (`SASL_SSL` / SCRAM-SHA-256 + TLS 1.2)** via `NewUpstashStatementEventProducer` e `NewStatementEventProducerFromEnv`.
+- Integração de Circuit Breaker com `github.com/sony/gobreaker` e retry idempotente (timeout 3s) no cliente East-West gRPC (`EastWestGrpcBridgeClient`).
 - Padronização de governança DevEx (`README.md`, `CHANGELOG.md`, `CONTRIBUTING.md`) e workflow de validação de **Conventional Commits** em Pull Requests para `develop` e `main`.
 
 ---

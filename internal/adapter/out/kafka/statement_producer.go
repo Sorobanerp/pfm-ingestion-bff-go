@@ -2,11 +2,16 @@ package kafka
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
+	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/dantas-pfm/pfm-ingestion-bff-go/internal/domain"
 	kafkago "github.com/segmentio/kafka-go"
+	"github.com/segmentio/kafka-go/sasl/scram"
 )
 
 const TopicStatementRawExtracted = "statement.raw.extracted"
@@ -35,6 +40,15 @@ type MessageWriter interface {
 	Close() error
 }
 
+// KafkaConfig configures Kafka producer connectivity, supporting both local KRaft and Upstash Kafka Serverless (SASL_SSL).
+type KafkaConfig struct {
+	Brokers    []string
+	Topic      string
+	Username   string
+	Password   string
+	UseSASLSSL bool
+}
+
 // StatementEventProducer publishes extracted statement transactions to the `statement.raw.extracted` topic,
 // strictly partitioned by `tenant_id` (ADR-005).
 type StatementEventProducer struct {
@@ -50,6 +64,48 @@ func NewStatementEventProducer(brokers []string) *StatementEventProducer {
 		RequiredAcks: kafkago.RequireAll,
 	}
 	return &StatementEventProducer{writer: w}
+}
+
+// NewUpstashStatementEventProducer creates a Kafka producer compatible with Upstash Kafka Serverless (SASL_SSL / SCRAM-SHA-256 + TLS 1.2).
+func NewUpstashStatementEventProducer(cfg KafkaConfig) (*StatementEventProducer, error) {
+	if len(cfg.Brokers) == 0 {
+		return nil, fmt.Errorf("kafka brokers must not be empty")
+	}
+	topic := cfg.Topic
+	if topic == "" {
+		topic = TopicStatementRawExtracted
+	}
+	w := &kafkago.Writer{
+		Addr:         kafkago.TCP(cfg.Brokers...),
+		Topic:        topic,
+		Balancer:     &kafkago.Hash{},
+		BatchTimeout: 10 * time.Millisecond,
+		RequiredAcks: kafkago.RequireAll,
+	}
+	if cfg.UseSASLSSL {
+		mechanism, err := scram.Mechanism(scram.SHA256, cfg.Username, cfg.Password)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create SCRAM-SHA-256 mechanism: %w", err)
+		}
+		w.Transport = &kafkago.Transport{
+			SASL: mechanism,
+			TLS:  &tls.Config{MinVersion: tls.VersionTLS12},
+		}
+	}
+	return &StatementEventProducer{writer: w}, nil
+}
+
+// NewStatementEventProducerFromEnv builds a Kafka producer from environment variables (supporting SASL_SSL for Upstash).
+func NewStatementEventProducerFromEnv(brokers []string) (*StatementEventProducer, error) {
+	protocol := strings.ToUpper(strings.TrimSpace(os.Getenv("KAFKA_SECURITY_PROTOCOL")))
+	useSASL := protocol == "SASL_SSL"
+	return NewUpstashStatementEventProducer(KafkaConfig{
+		Brokers:    brokers,
+		Topic:      TopicStatementRawExtracted,
+		Username:   os.Getenv("KAFKA_SASL_USERNAME"),
+		Password:   os.Getenv("KAFKA_SASL_PASSWORD"),
+		UseSASLSSL: useSASL,
+	})
 }
 
 func NewStatementEventProducerWithWriter(writer MessageWriter) *StatementEventProducer {

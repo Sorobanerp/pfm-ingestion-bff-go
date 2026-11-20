@@ -152,3 +152,24 @@ func TestSimulateContract_EdgeCasesAnd500(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, res2["simulated_installments"])
 }
+
+func TestEastWestGrpcBridgeClient_GobreakerAndIdempotentRetry(t *testing.T) {
+	var attempts int
+	srvRetry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts < 3 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"tenants":[],"totalCount":0}`))
+	}))
+	defer srvRetry.Close()
+
+	client := NewEastWestGrpcBridgeClient(srvRetry.URL, "")
+	res, err := client.ListTenants(context.Background(), 10, "", "", "")
+	require.NoError(t, err)
+	assert.Equal(t, float64(0), res["totalCount"])
+	assert.Equal(t, 3, attempts)
+	assert.Equal(t, "closed", client.CircuitState().String())
+}
