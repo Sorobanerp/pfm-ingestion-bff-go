@@ -114,7 +114,7 @@ func unlockPDFInMemory(encryptedPDF []byte, password string) ([]byte, error) {
 
 	rs := bytes.NewReader(encryptedPDF)
 	var outBuf bytes.Buffer
-	if err := api.Decrypt(rs, &outBuf, conf); err != nil {
+	if err := api.Decrypt(context.Background(), rs, &outBuf, conf); err != nil {
 		return nil, fmt.Errorf("pdfcpu in-memory decrypt failed: %w", err)
 	}
 	return outBuf.Bytes(), nil
@@ -125,7 +125,7 @@ func EncryptPDFInMemory(plainPDF []byte, password string) ([]byte, error) {
 	conf := model.NewAESConfiguration(password, password, 256)
 	rs := bytes.NewReader(plainPDF)
 	var outBuf bytes.Buffer
-	if err := api.Encrypt(rs, &outBuf, conf); err != nil {
+	if err := api.Encrypt(context.Background(), rs, &outBuf, conf); err != nil {
 		return nil, fmt.Errorf("pdfcpu in-memory encrypt failed: %w", err)
 	}
 	return io.ReadAll(&outBuf)
