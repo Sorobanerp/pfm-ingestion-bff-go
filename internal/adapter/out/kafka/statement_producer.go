@@ -89,7 +89,7 @@ func NewUpstashStatementEventProducer(cfg KafkaConfig) (*StatementEventProducer,
 		}
 		w.Transport = &kafkago.Transport{
 			SASL: mechanism,
-			TLS:  &tls.Config{MinVersion: tls.VersionTLS12},
+			TLS:  &tls.Config{MinVersion: tls.VersionTLS13},
 		}
 	}
 	return &StatementEventProducer{writer: w}, nil
