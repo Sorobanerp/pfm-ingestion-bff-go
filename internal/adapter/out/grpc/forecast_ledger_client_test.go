@@ -173,3 +173,55 @@ func TestEastWestGrpcBridgeClient_GobreakerAndIdempotentRetry(t *testing.T) {
 	assert.Equal(t, 3, attempts)
 	assert.Equal(t, "closed", client.CircuitState().String())
 }
+
+func TestEastWestGrpcBridgeClient_AllAdminAndProfileMethods(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"OK"}`))
+	}))
+	defer srv.Close()
+
+	client := NewEastWestGrpcBridgeClient(srv.URL, "")
+	ctx := context.Background()
+
+	_, err := client.ChangeTenantPlan(ctx, "t1", "FAMILY_PLUS")
+	require.NoError(t, err)
+	_, err = client.UpdateSubscriptionStatus(ctx, "t1", "ACTIVE", "ok")
+	require.NoError(t, err)
+	_, err = client.GetPlatformMetrics(ctx, "30d")
+	require.NoError(t, err)
+	_, err = client.GetUserProfile(ctx, "t1", "sub-1")
+	require.NoError(t, err)
+	_, err = client.UpdateUserProfile(ctx, "t1", "sub-1", "Nome")
+	require.NoError(t, err)
+	_, err = client.ListFamilyMembers(ctx, "t1")
+	require.NoError(t, err)
+	_, err = client.InviteFamilyMember(ctx, "t1", "a@b.com", "M", "MEMBER", "100.0000")
+	require.NoError(t, err)
+	_, err = client.RemoveFamilyMember(ctx, "t1", "m1")
+	require.NoError(t, err)
+	_, err = client.GetCategoryBudgets(ctx, "t1")
+	require.NoError(t, err)
+	_, err = client.SetCategoryBudget(ctx, "t1", "ALIMENTACAO", "Alimentação", "1000.0000", 80)
+	require.NoError(t, err)
+	_, err = client.SetCardPdfPassword(ctx, "t1", "c1", "1234")
+	require.NoError(t, err)
+	_, err = client.ExportUserData(ctx, "t1", "u1", "JSON")
+	require.NoError(t, err)
+	_, err = client.RequestCryptoShredding(ctx, "t1", "u1", "EXCLUIR_DEFINITIVAMENTE_MINHA_CONTA", "123456")
+	require.NoError(t, err)
+
+	// Also test 400 non-retriable error and open circuit breaker
+	srv400 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"bad request"}`))
+	}))
+	defer srv400.Close()
+	c400 := NewEastWestGrpcBridgeClient(srv400.URL, "")
+	for i := 0; i < 3; i++ {
+		_, err = c400.ChangeTenantPlan(ctx, "t1", "FREE")
+		assert.Error(t, err)
+	}
+	_, err = c400.ChangeTenantPlan(ctx, "t1", "FREE")
+	assert.ErrorIs(t, err, ErrEastWestCircuitOpen)
+}
