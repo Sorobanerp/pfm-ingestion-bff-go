@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const DefaultOtlpEndpoint = "http://datadog-agent.monitoring.svc.cluster.local:4318"
+const DefaultOtlpEndpoint = "https://otel-collector.pfm.internal:4318"
 
 var (
 	reCPF        = regexp.MustCompile(`\b\d{3}\.?\d{3}\.?\d{3}-\d{2}\b|\b\d{11}\b`)
