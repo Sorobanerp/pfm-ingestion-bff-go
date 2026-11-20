@@ -101,9 +101,7 @@ func (p *ZeroPersistencePDFParser) ParseStatementInRAM(
 }
 
 func zeroBytes(buf []byte) {
-	for i := range buf {
-		buf[i] = 0
-	}
+	clear(buf)
 }
 
 // unlockPDFInMemory uses pdfcpu to decrypt a password-protected PDF stream strictly in RAM
