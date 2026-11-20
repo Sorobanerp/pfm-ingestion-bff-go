@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -85,6 +86,24 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/receipts/nfce", s.handleNfceReceiptUpload)
 	s.mux.HandleFunc("GET /api/v1/dashboard", s.handleDashboardSummary)
 	s.mux.HandleFunc("POST /api/v1/contracts/simulate", s.handleContractSimulate)
+
+	// SaaS Admin endpoints (US-12)
+	s.mux.HandleFunc("GET /api/v1/admin/tenants", s.handleAdminListTenants)
+	s.mux.HandleFunc("PUT /api/v1/admin/tenants/{tenant_id}/plan", s.handleAdminChangeTenantPlan)
+	s.mux.HandleFunc("PUT /api/v1/admin/tenants/{tenant_id}/status", s.handleAdminUpdateSubscriptionStatus)
+	s.mux.HandleFunc("GET /api/v1/admin/metrics", s.handleAdminPlatformMetrics)
+
+	// User Profile & Family endpoints (US-13)
+	s.mux.HandleFunc("GET /api/v1/profile", s.handleGetProfile)
+	s.mux.HandleFunc("PUT /api/v1/profile", s.handleUpdateProfile)
+	s.mux.HandleFunc("GET /api/v1/profile/members", s.handleListFamilyMembers)
+	s.mux.HandleFunc("POST /api/v1/profile/members", s.handleInviteFamilyMember)
+	s.mux.HandleFunc("DELETE /api/v1/profile/members/{member_id}", s.handleRemoveFamilyMember)
+	s.mux.HandleFunc("GET /api/v1/profile/budgets", s.handleGetCategoryBudgets)
+	s.mux.HandleFunc("POST /api/v1/profile/budgets", s.handleSetCategoryBudget)
+	s.mux.HandleFunc("POST /api/v1/profile/cards/{card_id}/pdf-password", s.handleSetCardPdfPassword)
+	s.mux.HandleFunc("POST /api/v1/profile/export", s.handleExportUserData)
+	s.mux.HandleFunc("POST /api/v1/profile/crypto-shred", s.handleRequestCryptoShredding)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -297,4 +316,355 @@ func writeJSONWithETagAndCompression(w http.ResponseWriter, r *http.Request, sta
 
 	w.WriteHeader(status)
 	_, _ = w.Write(rawJSON) // nosemgrep: go.lang.security.audit.xss.no-direct-write-to-responsewriter.no-direct-write-to-responsewriter
+}
+
+func (s *Server) handleAdminListTenants(w http.ResponseWriter, r *http.Request) {
+	_, ok := s.requirePlatformAdmin(w, r)
+	if !ok {
+		return
+	}
+	pageSizeStr := r.URL.Query().Get("page_size")
+	pageSize := 20
+	if pageSizeStr != "" {
+		if val, err := strconv.Atoi(pageSizeStr); err == nil && val > 0 {
+			pageSize = val
+		}
+	}
+	pageToken := r.URL.Query().Get("page_token")
+	statusFilter := r.URL.Query().Get("status")
+	planFilter := r.URL.Query().Get("plan")
+
+	res, err := s.eastWestClient.ListTenants(r.Context(), pageSize, pageToken, statusFilter, planFilter)
+	if err != nil {
+		writeJSONWithETagAndCompression(w, r, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSONWithETagAndCompression(w, r, http.StatusOK, res)
+}
+
+func (s *Server) handleAdminChangeTenantPlan(w http.ResponseWriter, r *http.Request) {
+	_, ok := s.requirePlatformAdmin(w, r)
+	if !ok {
+		return
+	}
+	tenantID := r.PathValue("tenant_id")
+	if tenantID == "" || !reUUID.MatchString(tenantID) {
+		writeJSONWithETagAndCompression(w, r, http.StatusBadRequest, map[string]string{"error": "invalid tenant_id UUID"})
+		return
+	}
+
+	var req struct {
+		NewPlan      string `json:"new_plan"`
+		NewPlanCamel string `json:"newPlan"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64*1024)).Decode(&req); err != nil {
+		writeJSONWithETagAndCompression(w, r, http.StatusBadRequest, map[string]string{"error": "invalid JSON payload"})
+		return
+	}
+	plan := req.NewPlan
+	if plan == "" {
+		plan = req.NewPlanCamel
+	}
+	if plan == "" {
+		writeJSONWithETagAndCompression(w, r, http.StatusBadRequest, map[string]string{"error": "new_plan is required"})
+		return
+	}
+
+	res, err := s.eastWestClient.ChangeTenantPlan(r.Context(), tenantID, plan)
+	if err != nil {
+		writeJSONWithETagAndCompression(w, r, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSONWithETagAndCompression(w, r, http.StatusOK, res)
+}
+
+func (s *Server) handleAdminUpdateSubscriptionStatus(w http.ResponseWriter, r *http.Request) {
+	_, ok := s.requirePlatformAdmin(w, r)
+	if !ok {
+		return
+	}
+	tenantID := r.PathValue("tenant_id")
+	if tenantID == "" || !reUUID.MatchString(tenantID) {
+		writeJSONWithETagAndCompression(w, r, http.StatusBadRequest, map[string]string{"error": "invalid tenant_id UUID"})
+		return
+	}
+
+	var req struct {
+		NewStatus      string `json:"new_status"`
+		NewStatusCamel string `json:"newStatus"`
+		Reason         string `json:"reason"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64*1024)).Decode(&req); err != nil {
+		writeJSONWithETagAndCompression(w, r, http.StatusBadRequest, map[string]string{"error": "invalid JSON payload"})
+		return
+	}
+	status := req.NewStatus
+	if status == "" {
+		status = req.NewStatusCamel
+	}
+	if status == "" {
+		writeJSONWithETagAndCompression(w, r, http.StatusBadRequest, map[string]string{"error": "new_status is required"})
+		return
+	}
+
+	res, err := s.eastWestClient.UpdateSubscriptionStatus(r.Context(), tenantID, status, req.Reason)
+	if err != nil {
+		writeJSONWithETagAndCompression(w, r, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSONWithETagAndCompression(w, r, http.StatusOK, res)
+}
+
+func (s *Server) handleAdminPlatformMetrics(w http.ResponseWriter, r *http.Request) {
+	_, ok := s.requirePlatformAdmin(w, r)
+	if !ok {
+		return
+	}
+	period := r.URL.Query().Get("period")
+	res, err := s.eastWestClient.GetPlatformMetrics(r.Context(), period)
+	if err != nil {
+		writeJSONWithETagAndCompression(w, r, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSONWithETagAndCompression(w, r, http.StatusOK, res)
+}
+
+func (s *Server) handleGetProfile(w http.ResponseWriter, r *http.Request) {
+	claims, ok := s.requireProfileUser(w, r)
+	if !ok {
+		return
+	}
+	res, err := s.eastWestClient.GetUserProfile(r.Context(), claims.TenantID, claims.Subject)
+	if err != nil {
+		writeJSONWithETagAndCompression(w, r, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSONWithETagAndCompression(w, r, http.StatusOK, res)
+}
+
+func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
+	claims, ok := s.requireFamilyOwnerOrMember(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		FullName      string `json:"full_name"`
+		FullNameCamel string `json:"fullName"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64*1024)).Decode(&req); err != nil {
+		writeJSONWithETagAndCompression(w, r, http.StatusBadRequest, map[string]string{"error": "invalid JSON payload"})
+		return
+	}
+	fullName := req.FullName
+	if fullName == "" {
+		fullName = req.FullNameCamel
+	}
+	res, err := s.eastWestClient.UpdateUserProfile(r.Context(), claims.TenantID, claims.Subject, fullName)
+	if err != nil {
+		writeJSONWithETagAndCompression(w, r, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSONWithETagAndCompression(w, r, http.StatusOK, res)
+}
+
+func (s *Server) handleListFamilyMembers(w http.ResponseWriter, r *http.Request) {
+	claims, ok := s.requireProfileUser(w, r)
+	if !ok {
+		return
+	}
+	res, err := s.eastWestClient.ListFamilyMembers(r.Context(), claims.TenantID)
+	if err != nil {
+		writeJSONWithETagAndCompression(w, r, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSONWithETagAndCompression(w, r, http.StatusOK, res)
+}
+
+func (s *Server) handleInviteFamilyMember(w http.ResponseWriter, r *http.Request) {
+	claims, ok := s.requireFamilyOwnerOrMember(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Email                  string `json:"email"`
+		FullName               string `json:"full_name"`
+		FullNameCamel          string `json:"fullName"`
+		Role                   string `json:"role"`
+		SpendingAllowance      string `json:"spending_allowance"`
+		SpendingAllowanceCamel string `json:"spendingAllowance"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64*1024)).Decode(&req); err != nil {
+		writeJSONWithETagAndCompression(w, r, http.StatusBadRequest, map[string]string{"error": "invalid JSON payload"})
+		return
+	}
+	fullName := req.FullName
+	if fullName == "" {
+		fullName = req.FullNameCamel
+	}
+	allowance := req.SpendingAllowance
+	if allowance == "" {
+		allowance = req.SpendingAllowanceCamel
+	}
+	res, err := s.eastWestClient.InviteFamilyMember(r.Context(), claims.TenantID, req.Email, fullName, req.Role, allowance)
+	if err != nil {
+		writeJSONWithETagAndCompression(w, r, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSONWithETagAndCompression(w, r, http.StatusCreated, res)
+}
+
+func (s *Server) handleRemoveFamilyMember(w http.ResponseWriter, r *http.Request) {
+	claims, ok := s.requireFamilyOwnerOrMember(w, r)
+	if !ok {
+		return
+	}
+	memberID := r.PathValue("member_id")
+	if memberID == "" || !reUUID.MatchString(memberID) {
+		writeJSONWithETagAndCompression(w, r, http.StatusBadRequest, map[string]string{"error": "invalid member_id UUID"})
+		return
+	}
+	_, err := s.eastWestClient.RemoveFamilyMember(r.Context(), claims.TenantID, memberID)
+	if err != nil {
+		writeJSONWithETagAndCompression(w, r, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleGetCategoryBudgets(w http.ResponseWriter, r *http.Request) {
+	claims, ok := s.requireProfileUser(w, r)
+	if !ok {
+		return
+	}
+	res, err := s.eastWestClient.GetCategoryBudgets(r.Context(), claims.TenantID)
+	if err != nil {
+		writeJSONWithETagAndCompression(w, r, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSONWithETagAndCompression(w, r, http.StatusOK, res)
+}
+
+func (s *Server) handleSetCategoryBudget(w http.ResponseWriter, r *http.Request) {
+	claims, ok := s.requireFamilyOwnerOrMember(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		CategoryID               string `json:"category_id"`
+		CategoryIDCamel          string `json:"categoryId"`
+		CategoryName             string `json:"category_name"`
+		CategoryNameCamel        string `json:"categoryName"`
+		MonthlyCap               string `json:"monthly_cap"`
+		MonthlyCapCamel          string `json:"monthlyCap"`
+		ThresholdPercentage      int    `json:"threshold_percentage"`
+		ThresholdPercentageCamel int    `json:"thresholdPercentage"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64*1024)).Decode(&req); err != nil {
+		writeJSONWithETagAndCompression(w, r, http.StatusBadRequest, map[string]string{"error": "invalid JSON payload"})
+		return
+	}
+	catID := req.CategoryID
+	if catID == "" {
+		catID = req.CategoryIDCamel
+	}
+	catName := req.CategoryName
+	if catName == "" {
+		catName = req.CategoryNameCamel
+	}
+	monthlyCap := req.MonthlyCap
+	if monthlyCap == "" {
+		monthlyCap = req.MonthlyCapCamel
+	}
+	threshold := req.ThresholdPercentage
+	if threshold == 0 {
+		threshold = req.ThresholdPercentageCamel
+	}
+
+	res, err := s.eastWestClient.SetCategoryBudget(r.Context(), claims.TenantID, catID, catName, monthlyCap, threshold)
+	if err != nil {
+		writeJSONWithETagAndCompression(w, r, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSONWithETagAndCompression(w, r, http.StatusOK, res)
+}
+
+func (s *Server) handleSetCardPdfPassword(w http.ResponseWriter, r *http.Request) {
+	claims, ok := s.requireFamilyOwnerOrMember(w, r)
+	if !ok {
+		return
+	}
+	cardID := r.PathValue("card_id")
+	if cardID == "" || !reUUID.MatchString(cardID) {
+		writeJSONWithETagAndCompression(w, r, http.StatusBadRequest, map[string]string{"error": "invalid card_id UUID"})
+		return
+	}
+	var req struct {
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64*1024)).Decode(&req); err != nil {
+		writeJSONWithETagAndCompression(w, r, http.StatusBadRequest, map[string]string{"error": "invalid JSON payload"})
+		return
+	}
+	if req.Password == "" {
+		writeJSONWithETagAndCompression(w, r, http.StatusBadRequest, map[string]string{"error": "password is required"})
+		return
+	}
+	res, err := s.eastWestClient.SetCardPdfPassword(r.Context(), claims.TenantID, cardID, req.Password)
+	if err != nil {
+		writeJSONWithETagAndCompression(w, r, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSONWithETagAndCompression(w, r, http.StatusOK, res)
+}
+
+func (s *Server) handleExportUserData(w http.ResponseWriter, r *http.Request) {
+	claims, ok := s.requireFamilyOwnerOrMember(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Format string `json:"format"`
+	}
+	_ = json.NewDecoder(io.LimitReader(r.Body, 64*1024)).Decode(&req)
+	format := strings.ToUpper(req.Format)
+	if format == "" {
+		format = "JSON"
+	}
+	res, err := s.eastWestClient.ExportUserData(r.Context(), claims.TenantID, claims.Subject, format)
+	if err != nil {
+		writeJSONWithETagAndCompression(w, r, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSONWithETagAndCompression(w, r, http.StatusAccepted, res)
+}
+
+func (s *Server) handleRequestCryptoShredding(w http.ResponseWriter, r *http.Request) {
+	claims, ok := s.requireFamilyOwnerOrMember(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		ConfirmationPhrase      string `json:"confirmation_phrase"`
+		ConfirmationPhraseCamel string `json:"confirmationPhrase"`
+		MfaToken                string `json:"mfa_token"`
+		MfaTokenCamel           string `json:"mfaToken"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64*1024)).Decode(&req); err != nil {
+		writeJSONWithETagAndCompression(w, r, http.StatusBadRequest, map[string]string{"error": "invalid JSON payload"})
+		return
+	}
+	phrase := req.ConfirmationPhrase
+	if phrase == "" {
+		phrase = req.ConfirmationPhraseCamel
+	}
+	mfa := req.MfaToken
+	if mfa == "" {
+		mfa = req.MfaTokenCamel
+	}
+	res, err := s.eastWestClient.RequestCryptoShredding(r.Context(), claims.TenantID, claims.Subject, phrase, mfa)
+	if err != nil {
+		writeJSONWithETagAndCompression(w, r, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSONWithETagAndCompression(w, r, http.StatusOK, res)
 }
