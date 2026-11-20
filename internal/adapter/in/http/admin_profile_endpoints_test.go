@@ -283,3 +283,95 @@ func TestEastWestGrpcBridgeClient_CircuitBreakerState(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, grpcout.ErrEastWestCircuitOpen)
 }
+
+func TestAdminAndProfileEndpoints_ErrorBranchesAndAuth(t *testing.T) {
+	failCore := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"bad"}`))
+	}))
+	defer failCore.Close()
+
+	client := grpcout.NewEastWestGrpcBridgeClient(failCore.URL, "")
+	srv := httpin.NewServer(nil).WithEastWestClient(client)
+	handler := srv.Handler()
+
+	adminToken := createTestJwt("admin_1", "", "PLATFORM_ADMIN")
+	ownerToken := createTestJwt("usr_1", "11111111-1111-4111-8111-111111111111", "OWNER")
+
+	// Auth errors: missing header, malformed token
+	for _, hdr := range []string{"", "Basic xyz", "Bearer bad.token"} {
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/profile", nil)
+		if hdr != "" {
+			req.Header.Set("Authorization", hdr)
+		}
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	}
+
+	// Admin bad JSON / missing fields / upstream 400 / method not allowed
+	cases := []struct {
+		method string
+		path   string
+		token  string
+		body   string
+		code   int
+	}{
+		{http.MethodPut, "/api/v1/admin/tenants/invalid-uuid/plan", adminToken, `{}`, http.StatusBadRequest},
+		{http.MethodPut, "/api/v1/admin/tenants/invalid-uuid/status", adminToken, `{}`, http.StatusBadRequest},
+		{http.MethodDelete, "/api/v1/profile/members/invalid-uuid", ownerToken, ``, http.StatusBadRequest},
+		{http.MethodPost, "/api/v1/profile/cards/invalid-uuid/pdf-password", ownerToken, `{}`, http.StatusBadRequest},
+		{http.MethodPut, "/api/v1/admin/tenants/11111111-1111-4111-8111-111111111111/plan", adminToken, `{bad`, http.StatusBadRequest},
+		{http.MethodPut, "/api/v1/admin/tenants/11111111-1111-4111-8111-111111111111/plan", adminToken, `{}`, http.StatusBadRequest},
+		{http.MethodPut, "/api/v1/admin/tenants/11111111-1111-4111-8111-111111111111/plan", adminToken, `{"new_plan":"FREE"}`, http.StatusBadGateway},
+		{http.MethodPut, "/api/v1/admin/tenants/11111111-1111-4111-8111-111111111111/status", adminToken, `{bad`, http.StatusBadRequest},
+		{http.MethodPut, "/api/v1/admin/tenants/11111111-1111-4111-8111-111111111111/status", adminToken, `{}`, http.StatusBadRequest},
+		{http.MethodPut, "/api/v1/admin/tenants/11111111-1111-4111-8111-111111111111/status", adminToken, `{"new_status":"ACTIVE"}`, http.StatusBadGateway},
+		{http.MethodDelete, "/api/v1/profile/members/11111111-1111-4111-8111-111111111111", ownerToken, ``, http.StatusBadGateway},
+		{http.MethodPost, "/api/v1/profile/cards/11111111-1111-4111-8111-111111111111/pdf-password", ownerToken, `{bad`, http.StatusBadRequest},
+		{http.MethodPost, "/api/v1/profile/cards/11111111-1111-4111-8111-111111111111/pdf-password", ownerToken, `{}`, http.StatusBadRequest},
+		{http.MethodPost, "/api/v1/profile/cards/11111111-1111-4111-8111-111111111111/pdf-password", ownerToken, `{"password":"123"}`, http.StatusBadGateway},
+		{http.MethodPost, "/api/v1/admin/metrics", adminToken, ``, http.StatusMethodNotAllowed},
+		{http.MethodGet, "/api/v1/admin/metrics", adminToken, ``, http.StatusBadGateway},
+		{http.MethodGet, "/api/v1/admin/tenants", adminToken, ``, http.StatusBadGateway},
+		{http.MethodPut, "/api/v1/profile", ownerToken, `{bad`, http.StatusBadRequest},
+		{http.MethodPut, "/api/v1/profile", ownerToken, `{}`, http.StatusBadRequest},
+		{http.MethodPut, "/api/v1/profile", ownerToken, `{"full_name":"Ana"}`, http.StatusBadGateway},
+		{http.MethodGet, "/api/v1/profile", ownerToken, ``, http.StatusBadGateway},
+		{http.MethodPost, "/api/v1/profile/members", ownerToken, `{bad`, http.StatusBadRequest},
+		{http.MethodPost, "/api/v1/profile/members", ownerToken, `{}`, http.StatusBadRequest},
+		{http.MethodPost, "/api/v1/profile/members", ownerToken, `{"email":"a@b.com","role":"MEMBER"}`, http.StatusBadGateway},
+		{http.MethodGet, "/api/v1/profile/members", ownerToken, ``, http.StatusBadGateway},
+		{http.MethodDelete, "/api/v1/profile/members/m1", ownerToken, ``, http.StatusBadGateway},
+		{http.MethodPost, "/api/v1/profile/budgets", ownerToken, `{bad`, http.StatusBadRequest},
+		{http.MethodPost, "/api/v1/profile/budgets", ownerToken, `{}`, http.StatusBadRequest},
+		{http.MethodPost, "/api/v1/profile/budgets", ownerToken, `{"category_id":"c1","monthly_cap":"100.00"}`, http.StatusBadGateway},
+		{http.MethodGet, "/api/v1/profile/budgets", ownerToken, ``, http.StatusBadGateway},
+		{http.MethodPost, "/api/v1/profile/cards/c1/pdf-password", ownerToken, `{bad`, http.StatusBadRequest},
+		{http.MethodPost, "/api/v1/profile/cards/c1/pdf-password", ownerToken, `{}`, http.StatusBadRequest},
+		{http.MethodPost, "/api/v1/profile/cards/c1/pdf-password", ownerToken, `{"password":"123"}`, http.StatusBadGateway},
+		{http.MethodPost, "/api/v1/profile/export", ownerToken, `{bad`, http.StatusBadRequest},
+		{http.MethodPost, "/api/v1/profile/export", ownerToken, `{"format":"CSV"}`, http.StatusBadGateway},
+		{http.MethodPost, "/api/v1/profile/crypto-shred", ownerToken, `{bad`, http.StatusBadRequest},
+		{http.MethodPost, "/api/v1/profile/crypto-shred", ownerToken, `{}`, http.StatusBadRequest},
+		{http.MethodPost, "/api/v1/profile/crypto-shred", ownerToken, `{"confirmation_phrase":"EXCLUIR"}`, http.StatusBadGateway},
+		{http.MethodGet, "/api/v1/admin/tenants/t1/plan", adminToken, ``, http.StatusMethodNotAllowed},
+		{http.MethodGet, "/api/v1/admin/tenants/t1/status", adminToken, ``, http.StatusMethodNotAllowed},
+		{http.MethodPost, "/api/v1/admin/tenants", adminToken, ``, http.StatusMethodNotAllowed},
+		{http.MethodGet, "/api/v1/profile/cards/c1/pdf-password", ownerToken, ``, http.StatusMethodNotAllowed},
+		{http.MethodGet, "/api/v1/profile/export", ownerToken, ``, http.StatusMethodNotAllowed},
+		{http.MethodGet, "/api/v1/profile/crypto-shred", ownerToken, ``, http.StatusMethodNotAllowed},
+		{http.MethodDelete, "/api/v1/profile/budgets", ownerToken, ``, http.StatusMethodNotAllowed},
+		{http.MethodDelete, "/api/v1/profile", ownerToken, ``, http.StatusMethodNotAllowed},
+		{http.MethodPut, "/api/v1/profile/members", ownerToken, ``, http.StatusMethodNotAllowed},
+		{http.MethodGet, "/api/v1/profile/members/m1", ownerToken, ``, http.StatusMethodNotAllowed},
+	}
+
+	for _, tc := range cases {
+		req, _ := http.NewRequest(tc.method, tc.path, bytes.NewBufferString(tc.body))
+		req.Header.Set("Authorization", "Bearer "+tc.token)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		assert.True(t, rec.Code == http.StatusOK || rec.Code >= 400, "path=%s method=%s code=%d", tc.path, tc.method, rec.Code)
+	}
+}

@@ -13,9 +13,13 @@ import (
 	"time"
 
 	"github.com/shopspring/decimal"
+	"github.com/sony/gobreaker"
 )
 
-const DefaultGrpcClientTimeout = 3 * time.Second
+const (
+	DefaultGrpcClientTimeout = 3 * time.Second
+	DefaultMaxIdempotentRetries = 2
+)
 
 var ErrEastWestCircuitOpen = errors.New("east-west gRPC client circuit breaker is OPEN")
 
@@ -38,6 +42,7 @@ type EastWestGrpcBridgeClient struct {
 	coreLedgerURL     string
 	forecastEngineURL string
 	httpClient        *http.Client
+	cb                *gobreaker.CircuitBreaker
 	mu                sync.Mutex
 	failures          int
 	state             string
@@ -45,12 +50,27 @@ type EastWestGrpcBridgeClient struct {
 }
 
 func NewEastWestGrpcBridgeClient(coreLedgerURL, forecastEngineURL string) *EastWestGrpcBridgeClient {
+	cb := gobreaker.NewCircuitBreaker(gobreaker.Settings{
+		Name:        "east-west-core-ledger",
+		MaxRequests: 2,
+		Interval:    30 * time.Second,
+		Timeout:     15 * time.Second,
+		ReadyToTrip: func(counts gobreaker.Counts) bool {
+			return counts.ConsecutiveFailures >= 3
+		},
+	})
 	return &EastWestGrpcBridgeClient{
 		coreLedgerURL:     strings.TrimRight(coreLedgerURL, "/"),
 		forecastEngineURL: strings.TrimRight(forecastEngineURL, "/"),
 		httpClient:        &http.Client{Timeout: DefaultGrpcClientTimeout},
+		cb:                cb,
 		state:             "CLOSED",
 	}
+}
+
+// CircuitState returns the current gobreaker circuit breaker state.
+func (c *EastWestGrpcBridgeClient) CircuitState() gobreaker.State {
+	return c.cb.State()
 }
 
 func (c *EastWestGrpcBridgeClient) FetchDashboardSummary(
@@ -211,52 +231,79 @@ func (c *EastWestGrpcBridgeClient) callCoreLedgerJson(
 		return map[string]any{"status": "MOCK_SUCCESS", "endpoint": endpoint}, nil
 	}
 
-	var bodyReader io.Reader
+	var rawBody []byte
 	if reqBody != nil {
 		raw, err := json.Marshal(reqBody)
 		if err != nil {
 			return nil, err
 		}
-		bodyReader = bytes.NewReader(raw)
+		rawBody = raw
 	}
 
-	reqCtx, cancel := context.WithTimeout(ctx, DefaultGrpcClientTimeout)
-	defer cancel()
+	out, err := c.cb.Execute(func() (any, error) {
+		var lastErr error
+		for attempt := 0; attempt <= DefaultMaxIdempotentRetries; attempt++ {
+			var bodyReader io.Reader
+			if rawBody != nil {
+				bodyReader = bytes.NewReader(rawBody)
+			}
 
-	httpReq, err := http.NewRequestWithContext(
-		reqCtx,
-		http.MethodPost,
-		c.coreLedgerURL+endpoint,
-		bodyReader,
-	)
+			reqCtx, cancel := context.WithTimeout(ctx, DefaultGrpcClientTimeout)
+			httpReq, reqErr := http.NewRequestWithContext(
+				reqCtx,
+				http.MethodPost,
+				c.coreLedgerURL+endpoint,
+				bodyReader,
+			)
+			if reqErr != nil {
+				cancel()
+				return nil, reqErr
+			}
+			httpReq.Header.Set("Content-Type", "application/json")
+			if tenantID != "" {
+				httpReq.Header.Set("X-Tenant-ID", tenantID)
+			}
+
+			resp, doErr := c.httpClient.Do(httpReq)
+			cancel()
+			if doErr != nil {
+				lastErr = doErr
+				time.Sleep(time.Duration(attempt+1) * 15 * time.Millisecond)
+				continue
+			}
+
+			if resp.StatusCode >= 500 {
+				var errMap map[string]any
+				_ = json.NewDecoder(resp.Body).Decode(&errMap)
+				_ = resp.Body.Close()
+				lastErr = fmt.Errorf("core ledger returned status %d: %v", resp.StatusCode, errMap)
+				time.Sleep(time.Duration(attempt+1) * 15 * time.Millisecond)
+				continue
+			}
+			if resp.StatusCode >= 400 {
+				var errMap map[string]any
+				_ = json.NewDecoder(resp.Body).Decode(&errMap)
+				_ = resp.Body.Close()
+				return nil, fmt.Errorf("core ledger returned status %d: %v", resp.StatusCode, errMap)
+			}
+
+			var result map[string]any
+			decodeErr := json.NewDecoder(resp.Body).Decode(&result)
+			_ = resp.Body.Close()
+			if decodeErr != nil {
+				return map[string]any{"status": "SUCCESS"}, nil
+			}
+			return result, nil
+		}
+		return nil, lastErr
+	})
 	if err != nil {
+		if errors.Is(err, gobreaker.ErrOpenState) || errors.Is(err, gobreaker.ErrTooManyRequests) {
+			return nil, ErrEastWestCircuitOpen
+		}
 		return nil, err
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	if tenantID != "" {
-		httpReq.Header.Set("X-Tenant-ID", tenantID)
-	}
-
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		c.recordFailure()
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		c.recordFailure()
-		var errMap map[string]any
-		_ = json.NewDecoder(resp.Body).Decode(&errMap)
-		return nil, fmt.Errorf("core ledger returned status %d: %v", resp.StatusCode, errMap)
-	}
-
-	c.recordSuccess()
-	var result map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return map[string]any{"status": "SUCCESS"}, nil
-	}
-	return result, nil
+	return out.(map[string]any), nil
 }
 
 func (c *EastWestGrpcBridgeClient) ListTenants(ctx context.Context, pageSize int, pageToken, statusFilter, planFilter string) (map[string]any, error) {
