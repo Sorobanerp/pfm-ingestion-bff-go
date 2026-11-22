@@ -239,6 +239,16 @@ func (s *Server) handleAdminCreateTenantLocal(w http.ResponseWriter, r *http.Req
 	if req.Plan == "" {
 		req.Plan = "FAMILY_PLUS"
 	}
+	if s.eastWestClient != nil {
+		if ledgerRes, err := s.eastWestClient.CreateTenant(r.Context(), req.TenantID, req.TenantName, req.OwnerEmail, req.Plan); err == nil && ledgerRes != nil && ledgerRes["status"] != "MOCK_SUCCESS" {
+			ledgerRes["tenant_id"] = req.TenantID
+			ledgerRes["tenant_name"] = req.TenantName
+			ledgerRes["owner_email"] = req.OwnerEmail
+			ledgerRes["rls_policy"] = "ENABLED_FAIL_CLOSED"
+			writeJSONWithETagAndCompression(w, r, http.StatusCreated, ledgerRes)
+			return
+		}
+	}
 	writeJSONWithETagAndCompression(w, r, http.StatusCreated, map[string]any{
 		"tenant_id":           req.TenantID,
 		"tenant_name":         req.TenantName,

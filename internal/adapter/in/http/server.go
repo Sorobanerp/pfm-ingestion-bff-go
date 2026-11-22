@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -402,20 +403,111 @@ func (s *Server) requireTenantID(w http.ResponseWriter, r *http.Request) (string
 	return tenantID, true
 }
 
+type statusCaptureResponseWriter struct {
+	http.ResponseWriter
+	statusCode int
+	respPreview bytes.Buffer
+}
+
+func (rw *statusCaptureResponseWriter) WriteHeader(code int) {
+	rw.statusCode = code
+	rw.ResponseWriter.WriteHeader(code)
+}
+
+func (rw *statusCaptureResponseWriter) Write(b []byte) (int, error) {
+	if rw.statusCode == 0 {
+		rw.statusCode = http.StatusOK
+	}
+	if rw.respPreview.Len() < 512 {
+		limit := 512 - rw.respPreview.Len()
+		if len(b) < limit {
+			limit = len(b)
+		}
+		rw.respPreview.Write(b[:limit])
+	}
+	return rw.ResponseWriter.Write(b)
+}
+
+func maskAuthorizationHeader(auth string) string {
+	auth = strings.TrimSpace(auth)
+	if auth == "" {
+		return ""
+	}
+	if len(auth) <= 14 {
+		return "Bearer ***"
+	}
+	return auth[:14] + "...[MASKED]"
+}
+
 func (s *Server) withMiddlewares(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
 		// Advertise HTTP/3 (QUIC) & HTTP/2 readiness per ADR-003 + CORS for pfm-web-nextjs (:3000)
 		w.Header().Set("Alt-Svc", `h3=":8443"; ma=86400, h2=":8443"; ma=86400`)
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept, X-Tenant-ID, If-None-Match, X-Statement-Issuer, X-Card-Last4, X-Statement-Password, X-Statement-Secret-Name, X-File-Name")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization, X-Tenant-ID, If-None-Match, X-Statement-Issuer, X-Card-Last4, X-Statement-Password, X-Statement-Secret-Name, X-File-Name")
 		w.Header().Set("Access-Control-Expose-Headers", "ETag, Alt-Svc, Retry-After")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		next.ServeHTTP(w, r)
+
+		var reqPreview string
+		if r.Body != nil && !strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "application/pdf") && !strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "multipart/") {
+			bodyBytes, err := io.ReadAll(io.LimitReader(r.Body, 15*1024*1024+1))
+			if err == nil {
+				r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+				previewLen := len(bodyBytes)
+				if previewLen > 400 {
+					previewLen = 400
+				}
+				reqPreview = string(bodyBytes[:previewLen])
+			}
+		} else if r.Header.Get("X-File-Name") != "" {
+			reqPreview = "[BINARY_STREAM:" + r.Header.Get("X-File-Name") + "]"
+		}
+
+		crw := &statusCaptureResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+		next.ServeHTTP(crw, r)
+
+		level := "DEBUG"
+		if crw.statusCode >= 500 {
+			level = "ERROR"
+		} else if crw.statusCode >= 400 {
+			level = "WARN"
+		}
+		envName := os.Getenv("APP_ENV")
+		if envName == "" {
+			envName = "local"
+		}
+		traceID := r.Header.Get("X-Datadog-Trace-ID")
+		if traceID == "" {
+			traceID = fmt.Sprintf("%d", start.UnixNano())
+		}
+
+		logEntry := map[string]any{
+			"timestamp":                time.Now().UTC().Format(time.RFC3339Nano),
+			"level":                    level,
+			"service":                  "pfm-ingestion-bff-go",
+			"env":                      envName,
+			"cloudwatch_logs_enabled":  false,
+			"dd.trace_id":              traceID,
+			"tenant_id":                r.Header.Get("X-Tenant-ID"),
+			"http.method":              r.Method,
+			"http.url":                 r.URL.RequestURI(),
+			"http.status_code":         crw.statusCode,
+			"http.auth_header_masked":  maskAuthorizationHeader(r.Header.Get("Authorization")),
+			"duration_ms":              time.Since(start).Milliseconds(),
+			"payload_preview":          reqPreview,
+		}
+		if crw.statusCode >= 400 {
+			logEntry["error.stack"] = crw.respPreview.String()
+		}
+		if rawLog, err := json.Marshal(logEntry); err == nil {
+			_, _ = fmt.Fprintln(os.Stdout, string(rawLog))
+		}
 	})
 }
 

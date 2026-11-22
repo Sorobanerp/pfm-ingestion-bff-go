@@ -320,6 +320,16 @@ func (c *EastWestGrpcBridgeClient) ListTenants(ctx context.Context, pageSize int
 	return res, err
 }
 
+func (c *EastWestGrpcBridgeClient) CreateTenant(ctx context.Context, tenantID, tenantName, ownerEmail, plan string) (map[string]any, error) {
+	body := map[string]any{
+		"tenantId":   tenantID,
+		"tenantName": tenantName,
+		"ownerEmail": ownerEmail,
+		"plan":       plan,
+	}
+	return c.callCoreLedgerJson(ctx, "/pfm.v1.TenantAdminService/CreateTenant", tenantID, body)
+}
+
 func (c *EastWestGrpcBridgeClient) ChangeTenantPlan(ctx context.Context, tenantID, newPlan string) (map[string]any, error) {
 	body := map[string]any{
 		"tenantId": tenantID,
