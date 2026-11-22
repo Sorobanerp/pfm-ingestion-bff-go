@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestEnvOrDefault(t *testing.T) {
@@ -70,4 +73,30 @@ func TestRun_ListenError(t *testing.T) {
 
 	err := run(context.Background(), getenv)
 	assert.Error(t, err)
+}
+
+func TestLoadDotEnvLocalAndLocalRun(t *testing.T) {
+	tmpFile := filepath.Join(t.TempDir(), ".env.local")
+	content := "# comment\n\nINVALID_LINE\nTEST_DOTENV_KEY=\"test_val\"\n"
+	require.NoError(t, os.WriteFile(tmpFile, []byte(content), 0o600))
+	loadDotEnvLocal(tmpFile)
+	assert.Equal(t, "test_val", os.Getenv("TEST_DOTENV_KEY"))
+	_ = os.Unsetenv("TEST_DOTENV_KEY")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	getenv := func(key string) string {
+		switch key {
+		case "APP_ENV":
+			return "local"
+		case "PORT", "SERVER_PORT":
+			return "0"
+		default:
+			return ""
+		}
+	}
+	errCh := make(chan error, 1)
+	go func() { errCh <- run(ctx, getenv) }()
+	time.Sleep(80 * time.Millisecond)
+	cancel()
+	assert.NoError(t, <-errCh)
 }

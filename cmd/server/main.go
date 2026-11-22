@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"log"
@@ -24,6 +25,7 @@ import (
 )
 
 func main() {
+	loadDotEnvLocal(".env.local")
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -32,15 +34,63 @@ func main() {
 	}
 }
 
+func loadDotEnvLocal(path string) {
+	f, err := os.Open(path) // #nosec G304
+	if err != nil {
+		return
+	}
+	defer func() { _ = f.Close() }()
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key := strings.TrimSpace(k)
+		val := strings.Trim(strings.TrimSpace(v), `"'`)
+		if key != "" && os.Getenv(key) == "" {
+			_ = os.Setenv(key, val)
+		}
+	}
+}
+
 func run(ctx context.Context, getenv func(string) string) error {
 	_ = observability.InitOtlpConfig(getenv, "pfm-ingestion-bff-go")
-	port := envOrDefault(getenv, "SERVER_PORT", envOrDefault(getenv, "PORT", "18100"))
-	localstackURL := envOrDefault(getenv, "AWS_ENDPOINT_URL", envOrDefault(getenv, "LOCALSTACK_ENDPOINT", aws.DefaultLocalStackEndpoint))
-	kafkaBrokers := strings.Split(envOrDefault(getenv, "KAFKA_BROKERS", "localhost:19092"), ",")
-	coreLedgerGrpcTarget := envOrDefault(getenv, "CORE_LEDGER_GRPC_ADDR", "localhost:18210")
+	isLocal := strings.EqualFold(strings.TrimSpace(getenv("APP_ENV")), "local")
+
+	defaultPort := "18100"
+	defaultLocalstack := aws.DefaultLocalStackEndpoint
+	defaultKafka := "localhost:19092"
+	defaultCoreGrpc := "localhost:18210"
+	defaultCoreHttp := "localhost:18200"
+	defaultForecastGrpc := "localhost:18110"
+
+	if isLocal {
+		defaultPort = "8080"
+		defaultLocalstack = "http://localhost:4566"
+		defaultKafka = "localhost:9092"
+		defaultCoreGrpc = "localhost:9090"
+		defaultCoreHttp = "localhost:8082"
+		defaultForecastGrpc = "localhost:9091"
+	}
+
+	port := envOrDefault(getenv, "SERVER_PORT", envOrDefault(getenv, "PORT", defaultPort))
+	localstackURL := envOrDefault(getenv, "AWS_ENDPOINT_URL", envOrDefault(getenv, "LOCALSTACK_ENDPOINT", defaultLocalstack))
+	kafkaBrokers := strings.Split(envOrDefault(getenv, "KAFKA_BROKERS", defaultKafka), ",")
+	coreLedgerGrpcTarget := envOrDefault(getenv, "CORE_LEDGER_GRPC_ADDR", defaultCoreGrpc)
 	eastWestScheme := envOrDefault(getenv, "EAST_WEST_SCHEME", "http")
-	coreLedgerHttpURL := envOrDefault(getenv, "CORE_LEDGER_HTTP_URL", eastWestScheme+"://localhost:18200")
-	forecastHttpURL := envOrDefault(getenv, "FORECAST_ENGINE_HTTP_URL", eastWestScheme+"://"+envOrDefault(getenv, "FORECAST_GRPC_ADDR", "localhost:18110"))
+	coreLedgerHttpURL := envOrDefault(getenv, "CORE_LEDGER_HTTP_URL", eastWestScheme+"://"+defaultCoreHttp)
+	forecastHttpURL := envOrDefault(getenv, "FORECAST_ENGINE_HTTP_URL", eastWestScheme+"://"+envOrDefault(getenv, "FORECAST_GRPC_ADDR", defaultForecastGrpc))
+	if isLocal && getenv("CORE_LEDGER_HTTP_URL") == "" {
+		coreLedgerHttpURL = ""
+	}
+	if isLocal && getenv("FORECAST_ENGINE_HTTP_URL") == "" {
+		forecastHttpURL = ""
+	}
 
 	// Establish East-West gRPC client connection readiness (ADR-003)
 	grpcConn, err := grpc.NewClient(
@@ -84,7 +134,7 @@ func run(ctx context.Context, getenv func(string) string) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		log.Printf("pfm-ingestion-bff-go listening on :%s (HTTP/2 & HTTP/3-Ready)", port)
+		log.Printf("pfm-ingestion-bff-go listening on :%s (HTTP/2, Swagger UI at http://localhost:%s/swagger/index.html)", port, port)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
