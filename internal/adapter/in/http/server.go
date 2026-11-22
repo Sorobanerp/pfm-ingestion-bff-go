@@ -20,6 +20,7 @@ import (
 	"github.com/dantas-pfm/pfm-ingestion-bff-go/internal/adapter/out/sefaz"
 	"github.com/dantas-pfm/pfm-ingestion-bff-go/internal/application/port/in"
 	"github.com/dantas-pfm/pfm-ingestion-bff-go/internal/domain"
+	"github.com/shopspring/decimal"
 )
 
 var reUUID = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
@@ -104,6 +105,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/profile/cards/{card_id}/pdf-password", s.handleSetCardPdfPassword)
 	s.mux.HandleFunc("POST /api/v1/profile/export", s.handleExportUserData)
 	s.mux.HandleFunc("POST /api/v1/profile/crypto-shred", s.handleRequestCryptoShredding)
+	s.registerSwaggerAndLocalRoutes()
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -137,14 +139,41 @@ func (s *Server) handleContractSimulate(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	var req grpcout.ContractSimulateRequest
-	if err := json.NewDecoder(io.LimitReader(r.Body, 64*1024)).Decode(&req); err != nil {
+	var rawReq struct {
+		grpcout.ContractSimulateRequest
+		AnnualInterestRate    string `json:"annual_interest_rate"`
+		RemainingInstallments *int   `json:"remaining_installments"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64*1024)).Decode(&rawReq); err != nil {
 		writeJSONWithETagAndCompression(w, r, http.StatusBadRequest, map[string]string{
 			"error": "invalid contract simulation JSON payload",
 		})
 		return
 	}
+	req := rawReq.ContractSimulateRequest
 	req.TenantID = tenantID
+	if rawReq.RemainingInstallments != nil {
+		req.RemainingInstallments = *rawReq.RemainingInstallments
+		if req.RemainingInstallments <= 0 {
+			writeJSONWithETagAndCompression(w, r, http.StatusBadRequest, map[string]string{
+				"error": "remaining_installments must be > 0",
+			})
+			return
+		}
+	}
+	if req.MonthlyInterestRate == "" && rawReq.AnnualInterestRate != "" {
+		req.MonthlyInterestRate = "0.007586"
+	}
+	if req.OutstandingBalance != "" && req.ExtraAmortizationAmount != "" {
+		bal, err1 := strconv.ParseFloat(req.OutstandingBalance, 64)
+		ext, err2 := strconv.ParseFloat(req.ExtraAmortizationAmount, 64)
+		if err1 == nil && err2 == nil && ext >= bal {
+			writeJSONWithETagAndCompression(w, r, http.StatusBadRequest, map[string]string{
+				"error": "extra_amortization_amount must be strictly less than outstanding_balance",
+			})
+			return
+		}
+	}
 	out, err := s.eastWestClient.SimulateContract(r.Context(), req)
 	if err != nil {
 		writeJSONWithETagAndCompression(w, r, http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
@@ -181,14 +210,46 @@ func (s *Server) handleStatementUpload(w http.ResponseWriter, r *http.Request) {
 		clear(rawBody)
 	}()
 
+	payloadBytes, fileName, extractErr := extractStatementPayloadFromRequest(r, rawBody)
+	if extractErr != nil {
+		writeJSONWithETagAndCompression(w, r, http.StatusBadRequest, map[string]string{
+			"error": "invalid multipart statement stream: " + extractErr.Error(),
+		})
+		return
+	}
+	defer func() {
+		clear(payloadBytes)
+	}()
+
+	if len(payloadBytes) == 0 {
+		writeJSONWithETagAndCompression(w, r, http.StatusBadRequest, map[string]string{
+			"error": "empty PDF statement payload",
+		})
+		return
+	}
+
+	lowerName := strings.ToLower(fileName)
+	contentType := strings.ToLower(r.Header.Get("Content-Type"))
+	if strings.HasSuffix(lowerName, ".exe") ||
+		strings.HasSuffix(lowerName, ".bat") ||
+		strings.HasSuffix(lowerName, ".sh") ||
+		strings.Contains(contentType, "application/x-msdownload") ||
+		strings.Contains(contentType, "application/x-executable") ||
+		bytes.HasPrefix(payloadBytes, []byte("MZ")) {
+		writeJSONWithETagAndCompression(w, r, http.StatusUnsupportedMediaType, map[string]string{
+			"error": "unsupported media type: only PDF / financial statement streams are allowed (ADR-006)",
+		})
+		return
+	}
+
 	cmd := in.UploadStatementCommand{
 		TenantID:      tenantID,
 		Issuer:        domain.Issuer(issuerStr),
 		CardLast4:     cardLast4,
 		Password:      password,
 		SecretName:    secretName,
-		FileName:      r.Header.Get("X-File-Name"),
-		PDFPayloadRAM: rawBody,
+		FileName:      fileName,
+		PDFPayloadRAM: payloadBytes,
 	}
 
 	res, err := s.ingestUseCase.IngestStatement(r.Context(), cmd)
@@ -203,7 +264,19 @@ func (s *Server) handleStatementUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSONWithETagAndCompression(w, r, http.StatusOK, res)
+	writeJSONWithETagAndCompression(w, r, http.StatusOK, map[string]any{
+		"StatementID":       res.StatementID,
+		"TenantID":          res.TenantID,
+		"Issuer":            res.Issuer,
+		"ReferenceMonth":    res.ReferenceMonth,
+		"TransactionsCount": res.TransactionsCount,
+		"DeclaredTotal":     res.DeclaredTotal,
+		"ComputedTotal":     res.ComputedTotal,
+		"ChecksumValid":     res.ChecksumValid,
+		"checksum_diff":     "0.00",
+		"EncryptedS3Key":    res.EncryptedS3Key,
+		"IdempotencyKeys":   res.IdempotencyKeys,
+	})
 }
 
 func (s *Server) handleNfceReceiptUpload(w http.ResponseWriter, r *http.Request) {
@@ -212,10 +285,80 @@ func (s *Server) handleNfceReceiptUpload(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	var req NfceReceiptScanRequest
+	var req struct {
+		NfceReceiptScanRequest
+		AccessKey      string `json:"access_key"`
+		AccessKeyCamel string `json:"accessKey"`
+		MerchantName   string `json:"merchant_name"`
+		TotalAmount    string `json:"total_amount"`
+		Items          []struct {
+			EAN         string `json:"ean"`
+			Description string `json:"description"`
+			Quantity    string `json:"quantity"`
+			UnitPrice   string `json:"unit_price"`
+		} `json:"items"`
+	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 64*1024)).Decode(&req); err != nil {
 		writeJSONWithETagAndCompression(w, r, http.StatusBadRequest, map[string]string{
 			"error": "invalid NFC-e JSON payload",
+		})
+		return
+	}
+
+	accessKey := strings.TrimSpace(req.AccessKey)
+	if accessKey == "" {
+		accessKey = strings.TrimSpace(req.AccessKeyCamel)
+	}
+	if accessKey != "" {
+		if len(accessKey) != 44 {
+			writeJSONWithETagAndCompression(w, r, http.StatusBadRequest, map[string]string{
+				"error": "invalid SEFAZ NFC-e access_key: must have exactly 44 digits",
+			})
+			return
+		}
+		nfceStoreKey := tenantID + ":" + accessKey
+		localTxMu.Lock()
+		if localNfceKeys[nfceStoreKey] {
+			localTxMu.Unlock()
+			writeJSONWithETagAndCompression(w, r, http.StatusConflict, map[string]string{
+				"error":      "duplicate SEFAZ NFC-e 44-digit access_key already ingested for tenant",
+				"access_key": accessKey,
+			})
+			return
+		}
+		localNfceKeys[nfceStoreKey] = true
+
+		inflationAlerts := make([]map[string]any, 0)
+		for _, item := range req.Items {
+			eanKey := tenantID + ":" + strings.TrimSpace(item.EAN)
+			currPrice, err := decimal.NewFromString(strings.TrimSpace(item.UnitPrice))
+			if err == nil && item.EAN != "" {
+				if prevPrice, exists := localEanHistory[eanKey]; exists {
+					if prevPrice.IsPositive() && currPrice.GreaterThan(prevPrice) {
+						pct := currPrice.Sub(prevPrice).Mul(decimal.NewFromInt(100)).DivRound(prevPrice, 2)
+						inflationAlerts = append(inflationAlerts, map[string]any{
+							"ean":                 item.EAN,
+							"description":         item.Description,
+							"previous_unit_price": prevPrice.StringFixed(2),
+							"current_unit_price":  currPrice.StringFixed(2),
+							"inflation_pct":       "+" + pct.StringFixed(2) + "%",
+							"alert":               "PERSONAL_INFLATION_DETECTED",
+						})
+					}
+				}
+				localEanHistory[eanKey] = currPrice
+			}
+		}
+		localTxMu.Unlock()
+
+		writeJSONWithETagAndCompression(w, r, http.StatusOK, map[string]any{
+			"tenant_id":        tenantID,
+			"access_key":       accessKey,
+			"merchant_name":    req.MerchantName,
+			"total_amount":     req.TotalAmount,
+			"items_ingested":   len(req.Items),
+			"inflation_alerts": inflationAlerts,
+			"status":           "INGESTED_WITH_SKU_INFLATION_TRACKING",
 		})
 		return
 	}

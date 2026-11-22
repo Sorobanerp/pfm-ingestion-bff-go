@@ -1,0 +1,18 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run PFM Ingestion BFF (APP_ENV=local :8080)",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/cmd/server",
+      "envFile": "${workspaceFolder}/.env.local",
+      "env": {
+        "APP_ENV": "local",
+        "SERVER_PORT": "8080",
+        "PORT": "8080"
+      }
+    }
+  ]
+}
