@@ -189,7 +189,16 @@ func (s *Server) handleGenerateDevToken(w http.ResponseWriter, r *http.Request) 
 		req.Role = "OWNER"
 	}
 	if req.Subject == "" {
-		req.Subject = "usr-dantas-owner"
+		switch {
+		case strings.EqualFold(req.Role, "PLATFORM_ADMIN"):
+			req.Subject = "00000000-0000-0000-0000-000000000001"
+		case strings.EqualFold(req.Role, "VIEWER"):
+			req.Subject = "11111111-1111-1111-1111-111111111113"
+		case req.TenantID == "22222222-2222-2222-2222-222222222222":
+			req.Subject = "22222222-2222-2222-2222-222222222222"
+		default:
+			req.Subject = "11111111-1111-1111-1111-111111111112"
+		}
 	}
 	if req.TenantName == "" {
 		req.TenantName = "Familia Dantas"

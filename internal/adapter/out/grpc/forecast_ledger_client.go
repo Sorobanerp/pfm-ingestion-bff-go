@@ -23,6 +23,17 @@ const (
 
 var ErrEastWestCircuitOpen = errors.New("east-west gRPC client circuit breaker is OPEN")
 
+// UpstreamHTTPError preserves 4xx client errors from East-West services
+// so the BFF does not mask them as 500/502.
+type UpstreamHTTPError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *UpstreamHTTPError) Error() string {
+	return fmt.Sprintf("upstream returned status %d: %s", e.StatusCode, e.Message)
+}
+
 type ContractSimulateRequest struct {
 	TenantID                string `json:"tenant_id"`
 	ContractID              string `json:"contract_id"`
@@ -281,10 +292,21 @@ func (c *EastWestGrpcBridgeClient) callCoreLedgerJson(
 				continue
 			}
 			if resp.StatusCode >= 400 {
-				var errMap map[string]any
-				_ = json.NewDecoder(resp.Body).Decode(&errMap)
+				rawErr, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 				_ = resp.Body.Close()
-				return nil, fmt.Errorf("core ledger returned status %d: %v", resp.StatusCode, errMap)
+				msg := strings.TrimSpace(string(rawErr))
+				var errMap map[string]any
+				if json.Unmarshal(rawErr, &errMap) == nil {
+					if m, ok := errMap["error"].(string); ok && m != "" {
+						msg = m
+					} else if m, ok := errMap["message"].(string); ok && m != "" {
+						msg = m
+					}
+				}
+				if msg == "" {
+					msg = http.StatusText(resp.StatusCode)
+				}
+				return nil, &UpstreamHTTPError{StatusCode: resp.StatusCode, Message: msg}
 			}
 
 			var result map[string]any

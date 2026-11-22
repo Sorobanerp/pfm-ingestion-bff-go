@@ -30,23 +30,23 @@ func extractAuthClaims(r *http.Request) (*AuthClaims, error) {
 				_ = json.Unmarshal(payloadBytes, claims)
 			}
 		} else {
-			// Support test tokens or simple role name
+			// Support test tokens or simple role name with deterministic 36-char UUIDs
 			switch strings.ToLower(token) {
 			case "dev-admin-token":
 				claims.Role = "PLATFORM_ADMIN"
-				claims.Subject = "usr-platform-admin"
+				claims.Subject = "00000000-0000-0000-0000-000000000001"
 			case "dev-token-tenant-a":
 				claims.Role = "OWNER"
 				claims.TenantID = "11111111-1111-1111-1111-111111111111"
-				claims.Subject = "usr-dantas-owner"
+				claims.Subject = "11111111-1111-1111-1111-111111111112"
 			case "dev-token-tenant-b":
 				claims.Role = "OWNER"
 				claims.TenantID = "22222222-2222-2222-2222-222222222222"
-				claims.Subject = "usr-visitante-owner"
+				claims.Subject = "22222222-2222-2222-2222-222222222222"
 			case "dev-viewer-tenant-a":
 				claims.Role = "VIEWER"
 				claims.TenantID = "11111111-1111-1111-1111-111111111111"
-				claims.Subject = "usr-dantas-viewer"
+				claims.Subject = "11111111-1111-1111-1111-111111111113"
 			default:
 				claims.Role = token
 			}
@@ -66,7 +66,18 @@ func extractAuthClaims(r *http.Request) (*AuthClaims, error) {
 		claims.TenantID = r.Header.Get("X-Tenant-ID")
 	}
 	if claims.Subject == "" {
-		claims.Subject = "usr-anonymous"
+		switch claims.TenantID {
+		case "22222222-2222-2222-2222-222222222222":
+			claims.Subject = "22222222-2222-2222-2222-222222222222"
+		default:
+			if strings.EqualFold(claims.Role, "PLATFORM_ADMIN") {
+				claims.Subject = "00000000-0000-0000-0000-000000000001"
+			} else if strings.EqualFold(claims.Role, "VIEWER") {
+				claims.Subject = "11111111-1111-1111-1111-111111111113"
+			} else {
+				claims.Subject = "11111111-1111-1111-1111-111111111112"
+			}
+		}
 	}
 
 	return claims, nil

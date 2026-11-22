@@ -553,6 +553,15 @@ func writeJSONWithETagAndCompression(w http.ResponseWriter, r *http.Request, sta
 	_, _ = w.Write(rawJSON) // nosemgrep: go.lang.security.audit.xss.no-direct-write-to-responsewriter.no-direct-write-to-responsewriter
 }
 
+func writeEastWestError(w http.ResponseWriter, r *http.Request, err error) {
+	var upstreamErr *grpcout.UpstreamHTTPError
+	if errors.As(err, &upstreamErr) && upstreamErr.StatusCode >= 400 && upstreamErr.StatusCode < 500 {
+		writeJSONWithETagAndCompression(w, r, upstreamErr.StatusCode, map[string]string{"error": upstreamErr.Message})
+		return
+	}
+	writeJSONWithETagAndCompression(w, r, http.StatusBadGateway, map[string]string{"error": err.Error()})
+}
+
 func (s *Server) handleAdminListTenants(w http.ResponseWriter, r *http.Request) {
 	_, ok := s.requirePlatformAdmin(w, r)
 	if !ok {
@@ -571,7 +580,7 @@ func (s *Server) handleAdminListTenants(w http.ResponseWriter, r *http.Request) 
 
 	res, err := s.eastWestClient.ListTenants(r.Context(), pageSize, pageToken, statusFilter, planFilter)
 	if err != nil {
-		writeJSONWithETagAndCompression(w, r, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		writeEastWestError(w, r, err)
 		return
 	}
 	writeJSONWithETagAndCompression(w, r, http.StatusOK, res)
@@ -607,7 +616,7 @@ func (s *Server) handleAdminChangeTenantPlan(w http.ResponseWriter, r *http.Requ
 
 	res, err := s.eastWestClient.ChangeTenantPlan(r.Context(), tenantID, plan)
 	if err != nil {
-		writeJSONWithETagAndCompression(w, r, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		writeEastWestError(w, r, err)
 		return
 	}
 	writeJSONWithETagAndCompression(w, r, http.StatusOK, res)
@@ -644,7 +653,7 @@ func (s *Server) handleAdminUpdateSubscriptionStatus(w http.ResponseWriter, r *h
 
 	res, err := s.eastWestClient.UpdateSubscriptionStatus(r.Context(), tenantID, status, req.Reason)
 	if err != nil {
-		writeJSONWithETagAndCompression(w, r, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		writeEastWestError(w, r, err)
 		return
 	}
 	writeJSONWithETagAndCompression(w, r, http.StatusOK, res)
@@ -658,7 +667,7 @@ func (s *Server) handleAdminPlatformMetrics(w http.ResponseWriter, r *http.Reque
 	period := r.URL.Query().Get("period")
 	res, err := s.eastWestClient.GetPlatformMetrics(r.Context(), period)
 	if err != nil {
-		writeJSONWithETagAndCompression(w, r, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		writeEastWestError(w, r, err)
 		return
 	}
 	writeJSONWithETagAndCompression(w, r, http.StatusOK, res)
@@ -671,7 +680,7 @@ func (s *Server) handleGetProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := s.eastWestClient.GetUserProfile(r.Context(), claims.TenantID, claims.Subject)
 	if err != nil {
-		writeJSONWithETagAndCompression(w, r, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		writeEastWestError(w, r, err)
 		return
 	}
 	writeJSONWithETagAndCompression(w, r, http.StatusOK, res)
@@ -696,7 +705,7 @@ func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := s.eastWestClient.UpdateUserProfile(r.Context(), claims.TenantID, claims.Subject, fullName)
 	if err != nil {
-		writeJSONWithETagAndCompression(w, r, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		writeEastWestError(w, r, err)
 		return
 	}
 	writeJSONWithETagAndCompression(w, r, http.StatusOK, res)
@@ -709,7 +718,7 @@ func (s *Server) handleListFamilyMembers(w http.ResponseWriter, r *http.Request)
 	}
 	res, err := s.eastWestClient.ListFamilyMembers(r.Context(), claims.TenantID)
 	if err != nil {
-		writeJSONWithETagAndCompression(w, r, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		writeEastWestError(w, r, err)
 		return
 	}
 	writeJSONWithETagAndCompression(w, r, http.StatusOK, res)
@@ -742,7 +751,7 @@ func (s *Server) handleInviteFamilyMember(w http.ResponseWriter, r *http.Request
 	}
 	res, err := s.eastWestClient.InviteFamilyMember(r.Context(), claims.TenantID, req.Email, fullName, req.Role, allowance)
 	if err != nil {
-		writeJSONWithETagAndCompression(w, r, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		writeEastWestError(w, r, err)
 		return
 	}
 	writeJSONWithETagAndCompression(w, r, http.StatusCreated, res)
@@ -760,7 +769,7 @@ func (s *Server) handleRemoveFamilyMember(w http.ResponseWriter, r *http.Request
 	}
 	_, err := s.eastWestClient.RemoveFamilyMember(r.Context(), claims.TenantID, memberID)
 	if err != nil {
-		writeJSONWithETagAndCompression(w, r, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		writeEastWestError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -773,7 +782,7 @@ func (s *Server) handleGetCategoryBudgets(w http.ResponseWriter, r *http.Request
 	}
 	res, err := s.eastWestClient.GetCategoryBudgets(r.Context(), claims.TenantID)
 	if err != nil {
-		writeJSONWithETagAndCompression(w, r, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		writeEastWestError(w, r, err)
 		return
 	}
 	writeJSONWithETagAndCompression(w, r, http.StatusOK, res)
@@ -817,7 +826,7 @@ func (s *Server) handleSetCategoryBudget(w http.ResponseWriter, r *http.Request)
 
 	res, err := s.eastWestClient.SetCategoryBudget(r.Context(), claims.TenantID, catID, catName, monthlyCap, threshold)
 	if err != nil {
-		writeJSONWithETagAndCompression(w, r, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		writeEastWestError(w, r, err)
 		return
 	}
 	writeJSONWithETagAndCompression(w, r, http.StatusOK, res)
@@ -846,7 +855,7 @@ func (s *Server) handleSetCardPdfPassword(w http.ResponseWriter, r *http.Request
 	}
 	res, err := s.eastWestClient.SetCardPdfPassword(r.Context(), claims.TenantID, cardID, req.Password)
 	if err != nil {
-		writeJSONWithETagAndCompression(w, r, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		writeEastWestError(w, r, err)
 		return
 	}
 	writeJSONWithETagAndCompression(w, r, http.StatusOK, res)
@@ -867,7 +876,7 @@ func (s *Server) handleExportUserData(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := s.eastWestClient.ExportUserData(r.Context(), claims.TenantID, claims.Subject, format)
 	if err != nil {
-		writeJSONWithETagAndCompression(w, r, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		writeEastWestError(w, r, err)
 		return
 	}
 	writeJSONWithETagAndCompression(w, r, http.StatusAccepted, res)
@@ -898,7 +907,7 @@ func (s *Server) handleRequestCryptoShredding(w http.ResponseWriter, r *http.Req
 	}
 	res, err := s.eastWestClient.RequestCryptoShredding(r.Context(), claims.TenantID, claims.Subject, phrase, mfa)
 	if err != nil {
-		writeJSONWithETagAndCompression(w, r, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		writeEastWestError(w, r, err)
 		return
 	}
 	writeJSONWithETagAndCompression(w, r, http.StatusOK, res)
