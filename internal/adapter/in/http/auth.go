@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"os"
 	"strings"
 )
 
@@ -30,7 +31,25 @@ func extractAuthClaims(r *http.Request) (*AuthClaims, error) {
 			}
 		} else {
 			// Support test tokens or simple role name
-			claims.Role = token
+			switch strings.ToLower(token) {
+			case "dev-admin-token":
+				claims.Role = "PLATFORM_ADMIN"
+				claims.Subject = "usr-platform-admin"
+			case "dev-token-tenant-a":
+				claims.Role = "OWNER"
+				claims.TenantID = "11111111-1111-1111-1111-111111111111"
+				claims.Subject = "usr-dantas-owner"
+			case "dev-token-tenant-b":
+				claims.Role = "OWNER"
+				claims.TenantID = "22222222-2222-2222-2222-222222222222"
+				claims.Subject = "usr-visitante-owner"
+			case "dev-viewer-tenant-a":
+				claims.Role = "VIEWER"
+				claims.TenantID = "11111111-1111-1111-1111-111111111111"
+				claims.Subject = "usr-dantas-viewer"
+			default:
+				claims.Role = token
+			}
 		}
 	}
 
@@ -56,10 +75,14 @@ func extractAuthClaims(r *http.Request) (*AuthClaims, error) {
 func (s *Server) requirePlatformAdmin(w http.ResponseWriter, r *http.Request) (*AuthClaims, bool) {
 	claims, _ := extractAuthClaims(r)
 	if claims.Role == "" && r.Header.Get("Authorization") == "" && r.Header.Get("X-User-Role") == "" {
-		writeJSONWithETagAndCompression(w, r, http.StatusUnauthorized, map[string]string{
-			"error": "missing or invalid authorization header (Bearer token required)",
-		})
-		return nil, false
+		if strings.EqualFold(strings.TrimSpace(os.Getenv("APP_ENV")), "local") && r.Header.Get("X-Tenant-ID") != "" {
+			claims.Role = "OWNER"
+		} else {
+			writeJSONWithETagAndCompression(w, r, http.StatusUnauthorized, map[string]string{
+				"error": "missing or invalid authorization header (Bearer token required)",
+			})
+			return nil, false
+		}
 	}
 
 	if claims.Role != "PLATFORM_ADMIN" {
@@ -84,10 +107,14 @@ func (s *Server) requireProfileUser(w http.ResponseWriter, r *http.Request) (*Au
 	}
 
 	if claims.Role == "" && r.Header.Get("Authorization") == "" && r.Header.Get("X-User-Role") == "" {
-		writeJSONWithETagAndCompression(w, r, http.StatusUnauthorized, map[string]string{
-			"error": "missing or invalid authorization header (Bearer token required)",
-		})
-		return nil, false
+		if strings.EqualFold(strings.TrimSpace(os.Getenv("APP_ENV")), "local") && r.Header.Get("X-Tenant-ID") != "" {
+			claims.Role = "OWNER"
+		} else {
+			writeJSONWithETagAndCompression(w, r, http.StatusUnauthorized, map[string]string{
+				"error": "missing or invalid authorization header (Bearer token required)",
+			})
+			return nil, false
+		}
 	}
 
 	tenantID := claims.TenantID

@@ -1,0 +1,464 @@
+# ==============================================================================
+# PFM PULSE — COLECAO OFICIAL DE HOMOLOGACAO LOCAL E2E (8 JORNADAS)
+# Compatible with: VS Code REST Client, IntelliJ HTTP Client, Insomnia, Postman
+# Target: pfm-ingestion-bff-go (http://localhost:8080)
+# Currency: 100% BRL (R$) | BigDecimal precision | Zero-Trust LGPD (ADR-006)
+# ==============================================================================
+
+@baseUrl = http://localhost:8080
+@tenantA = 11111111-1111-1111-1111-111111111111
+@tenantB = 22222222-2222-2222-2222-222222222222
+@ownerA = aaaaaaaa-1111-1111-1111-111111111111
+@viewerA = bbbbbbbb-1111-1111-1111-111111111111
+@ownerB = cccccccc-2222-2222-2222-222222222222
+@platformAdmin = 99999999-9999-9999-9999-999999999999
+
+# ==============================================================================
+# JORNADA 1 — AUTENTICACAO, ONBOARDING DE TENANT & ISOLAMENTO RLS
+# ==============================================================================
+
+### [J1-HAPPY-1] Emitir JWT Local para Tenant A (Familia Dantas - OWNER)
+# @name authTenantA
+POST {{baseUrl}}/api/v1/auth/dev-token
+Content-Type: application/json
+
+{
+  "tenant_id": "{{tenantA}}",
+  "user_id": "{{ownerA}}",
+  "role": "OWNER",
+  "email": "dantas@pfmpulse.com.br"
+}
+
+### [J1-HAPPY-2] Emitir JWT Local para Tenant B (Familia Visitante - OWNER)
+# @name authTenantB
+POST {{baseUrl}}/api/v1/auth/dev-token
+Content-Type: application/json
+
+{
+  "tenant_id": "{{tenantB}}",
+  "user_id": "{{ownerB}}",
+  "role": "OWNER",
+  "email": "visitante@pfmpulse.com.br"
+}
+
+### [J1-HAPPY-3] Emitir JWT Local para Membro VIEWER do Tenant A
+# @name authViewerA
+POST {{baseUrl}}/api/v1/auth/dev-token
+Content-Type: application/json
+
+{
+  "tenant_id": "{{tenantA}}",
+  "user_id": "{{viewerA}}",
+  "role": "VIEWER",
+  "email": "dependente@pfmpulse.com.br"
+}
+
+### [J1-HAPPY-4] Emitir JWT Local para PLATFORM_ADMIN (SaaS Backoffice)
+# @name authPlatformAdmin
+POST {{baseUrl}}/api/v1/auth/dev-token
+Content-Type: application/json
+
+{
+  "tenant_id": "{{tenantA}}",
+  "user_id": "{{platformAdmin}}",
+  "role": "PLATFORM_ADMIN",
+  "email": "sre-admin@soroban.com.br"
+}
+
+### [J1-HAPPY-5] Healthcheck BFF Go (HTTP/2 + Alt-Svc HTTP/3 Ready)
+GET {{baseUrl}}/health
+Accept: application/json
+
+### [J1-SAD-1] Requisicao sem Header X-Tenant-ID / JWT -> Esperado: 401 Unauthorized
+GET {{baseUrl}}/api/v1/dashboard/summary
+Accept: application/json
+
+### [J1-SAD-2] Requisicao com X-Tenant-ID Malformado -> Esperado: 401 Unauthorized
+GET {{baseUrl}}/api/v1/dashboard/summary
+X-Tenant-ID: invalid-uuid-format
+Accept: application/json
+
+# ==============================================================================
+# JORNADA 2 — GESTAO DE CARTOES DE CREDITO & LANCAMENTOS (CRUD COMPLETO)
+# ==============================================================================
+
+### [J2-HAPPY-1] Cadastrar Cartao de Credito Itau Personnalite (Final 5285, Limite R$ 15.000,00)
+# @name createCardA
+POST {{baseUrl}}/api/v1/cards
+Authorization: Bearer {{authTenantA.response.body.access_token}}
+X-Tenant-ID: {{tenantA}}
+Content-Type: application/json
+
+{
+  "name": "Itau Personnalite Black",
+  "issuer": "ITAU",
+  "last4": "5285",
+  "credit_limit": "15000.00",
+  "closing_day": 20,
+  "due_day": 28
+}
+
+### [J2-HAPPY-2] Criar Lancamento a Vista (R$ 245,90 - Supermercado Pao de Acucar)
+# @name createSpotTx
+POST {{baseUrl}}/api/v1/transactions
+Authorization: Bearer {{authTenantA.response.body.access_token}}
+X-Tenant-ID: {{tenantA}}
+Content-Type: application/json
+
+{
+  "card_id": "{{createCardA.response.body.card_id}}",
+  "merchant_name": "SUPERMERCADO PAO DE ACUCAR",
+  "amount": "245.90",
+  "currency": "BRL",
+  "category_code": "ALIMENTACAO :: SUPERMERCADO",
+  "installments": 1,
+  "transaction_date": "2026-11-10"
+}
+
+### [J2-HAPPY-3] Criar Lancamento Parcelado 10x (R$ 4.500,00 - Apple Store 01/10 a 10/10)
+# Sensibiliza o limite total em R$ 4.500,00 e projeta 10 parcelas de R$ 450,00 (RN02)
+# @name createInstallmentTx
+POST {{baseUrl}}/api/v1/transactions
+Authorization: Bearer {{authTenantA.response.body.access_token}}
+X-Tenant-ID: {{tenantA}}
+Content-Type: application/json
+
+{
+  "card_id": "{{createCardA.response.body.card_id}}",
+  "merchant_name": "APPLE STORE BRASIL",
+  "amount": "4500.00",
+  "currency": "BRL",
+  "category_code": "ESTILO_DE_VIDA :: ELETRONICOS",
+  "installments": 10,
+  "transaction_date": "2026-11-12"
+}
+
+### [J2-HAPPY-4] Editar Categoria e Observacao de Lancamento Existente (PATCH)
+PATCH {{baseUrl}}/api/v1/transactions/{{createSpotTx.response.body.id}}
+Authorization: Bearer {{authTenantA.response.body.access_token}}
+X-Tenant-ID: {{tenantA}}
+Content-Type: application/json
+
+{
+  "category_code": "ALIMENTACAO :: FEIRA_E_HORTIFRUTI",
+  "notes": "Compra mensal organicos auditada"
+}
+
+### [J2-HAPPY-5] Registrar Estorno / Credito na Mesma Categoria Original (RN03 - R$ 245,90)
+# @name refundSpotTx
+POST {{baseUrl}}/api/v1/transactions/{{createSpotTx.response.body.id}}/refund
+Authorization: Bearer {{authTenantA.response.body.access_token}}
+X-Tenant-ID: {{tenantA}}
+Content-Type: application/json
+
+{
+  "amount": "245.90",
+  "reason": "Cobranca duplicada estornada pelo estabelecimento"
+}
+
+### [J2-SAD-1] Criar Lancamento com Valor Negativo (-10.00) -> Esperado: 400 Bad Request
+POST {{baseUrl}}/api/v1/transactions
+Authorization: Bearer {{authTenantA.response.body.access_token}}
+X-Tenant-ID: {{tenantA}}
+Content-Type: application/json
+
+{
+  "merchant_name": "LANCAMENTO INVALIDO NEGATIVO",
+  "amount": "-10.00",
+  "currency": "BRL",
+  "category_code": "OUTROS",
+  "installments": 1
+}
+
+### [J2-SAD-2] Criar Lancamento com Valor Zero (0.00) -> Esperado: 400 Bad Request
+POST {{baseUrl}}/api/v1/transactions
+Authorization: Bearer {{authTenantA.response.body.access_token}}
+X-Tenant-ID: {{tenantA}}
+Content-Type: application/json
+
+{
+  "merchant_name": "LANCAMENTO INVALIDO ZERO",
+  "amount": "0.00",
+  "currency": "BRL",
+  "category_code": "OUTROS",
+  "installments": 1
+}
+
+### [J2-SAD-3] Criar Lancamento com Data Invalida -> Esperado: 400 Bad Request
+POST {{baseUrl}}/api/v1/transactions
+Authorization: Bearer {{authTenantA.response.body.access_token}}
+X-Tenant-ID: {{tenantA}}
+Content-Type: application/json
+
+{
+  "merchant_name": "DATA INVALIDA",
+  "amount": "50.00",
+  "currency": "BRL",
+  "transaction_date": "2026-99-99"
+}
+
+### [J2-SAD-4] Criar Lancamento com Parcelas = 0 -> Esperado: 400 Bad Request
+POST {{baseUrl}}/api/v1/transactions
+Authorization: Bearer {{authTenantA.response.body.access_token}}
+X-Tenant-ID: {{tenantA}}
+Content-Type: application/json
+
+{
+  "merchant_name": "PARCELA ZERO",
+  "amount": "150.00",
+  "currency": "BRL",
+  "installments": 0
+}
+
+### [J2-SAD-5] Membro VIEWER tentando Criar ou Deletar Lancamento -> Esperado: 403 Forbidden
+DELETE {{baseUrl}}/api/v1/transactions/{{createInstallmentTx.response.body.id}}
+Authorization: Bearer {{authViewerA.response.body.access_token}}
+X-Tenant-ID: {{tenantA}}
+
+### [J1-SAD-3] Cross-Tenant Access: Tenant B tentando ler Transacao do Tenant A -> Esperado: 404 Not Found
+GET {{baseUrl}}/api/v1/transactions/{{createInstallmentTx.response.body.id}}
+Authorization: Bearer {{authTenantB.response.body.access_token}}
+X-Tenant-ID: {{tenantB}}
+
+# ==============================================================================
+# JORNADA 3 — INGESTAO DE FATURA PDF EM RAM (ZERO-PERSISTENCE) & CHECKSUM (RN04)
+# ==============================================================================
+
+### [J3-HAPPY-1] Upload de Fatura PDF Valida em RAM (Soma Itens == Total Declarado R$ 750,90)
+POST {{baseUrl}}/api/v1/statements/upload
+Authorization: Bearer {{authTenantA.response.body.access_token}}
+X-Tenant-ID: {{tenantA}}
+X-Statement-Issuer: ITAU
+X-Card-Last4: 5285
+X-File-Name: fatura-itau-2026-11.pdf
+Content-Type: application/pdf
+
+ISSUER: ITAU | CARD: 5285 | REF: 2026-11 | DUE: 2026-11-28 | TOTAL: 750.90
+2026-11-05 | SUPERMERCADO PAO DE ACUCAR | 250.00
+2026-11-06 | APPLE STORE BRASIL 02/10 | 450.00
+2026-11-08 | DROGASIL FARMACIA | 41.00
+2026-11-10 | TARIFA ITAU AVISA SMS | 9.90
+
+### [J3-SAD-1] Fatura com Divergencia de Soma (Itens R$ 700,00 != Total R$ 750,90) -> Esperado: 409 Conflict (RN04)
+POST {{baseUrl}}/api/v1/statements/upload
+Authorization: Bearer {{authTenantA.response.body.access_token}}
+X-Tenant-ID: {{tenantA}}
+X-Statement-Issuer: ITAU
+X-Card-Last4: 5285
+X-File-Name: fatura-divergente.pdf
+Content-Type: application/pdf
+
+ISSUER: ITAU | CARD: 5285 | REF: 2026-11 | DUE: 2026-11-28 | TOTAL: 750.90
+2026-11-05 | SUPERMERCADO PAO DE ACUCAR | 250.00
+2026-11-06 | APPLE STORE BRASIL 02/10 | 450.00
+
+### [J3-SAD-2] Upload de Arquivo Executavel (.exe / MZ Header) -> Esperado: 415 Unsupported Media Type
+POST {{baseUrl}}/api/v1/statements/upload
+Authorization: Bearer {{authTenantA.response.body.access_token}}
+X-Tenant-ID: {{tenantA}}
+X-File-Name: malware.exe
+Content-Type: application/x-msdownload
+
+MZ_FAKE_EXECUTABLE_BINARY_STREAM
+
+# ==============================================================================
+# JORNADA 4 — INGESTAO DE CUPOM FISCAL SEFAZ (NFC-e) & INFLACAO PESSOAL POR SKU
+# ==============================================================================
+
+### [J4-HAPPY-1] Ingerir Nota Fiscal NFC-e 1 (Azeite Extra Virgem 500ml a R$ 39,90)
+POST {{baseUrl}}/api/v1/receipts/nfce
+Authorization: Bearer {{authTenantA.response.body.access_token}}
+X-Tenant-ID: {{tenantA}}
+Content-Type: application/json
+
+{
+  "access_key": "35261112345678000199650010000123451000123451",
+  "merchant_name": "CARREFOUR HIPERMERCADO LTDA",
+  "total_amount": "39.90",
+  "items": [
+    {
+      "ean": "7891234567890",
+      "description": "AZEITE EXTRA VIRGEM PORTUGUES 500ML",
+      "quantity": "1.000",
+      "unit_price": "39.90"
+    }
+  ]
+}
+
+### [J4-HAPPY-2] Ingerir Nota Fiscal NFC-e 2 (Mesmo SKU EAN 7891234567890 a R$ 47,90 -> Alerta +20,05%)
+POST {{baseUrl}}/api/v1/receipts/nfce
+Authorization: Bearer {{authTenantA.response.body.access_token}}
+X-Tenant-ID: {{tenantA}}
+Content-Type: application/json
+
+{
+  "access_key": "35261112345678000199650010000123451000123452",
+  "merchant_name": "PAO DE ACUCAR COMPASS",
+  "total_amount": "47.90",
+  "items": [
+    {
+      "ean": "7891234567890",
+      "description": "AZEITE EXTRA VIRGEM PORTUGUES 500ML",
+      "quantity": "1.000",
+      "unit_price": "47.90"
+    }
+  ]
+}
+
+### [J4-SAD-1] Reenviar Mesma Chave NFC-e de 44 Digitos (Idempotencia) -> Esperado: 409 Conflict
+POST {{baseUrl}}/api/v1/receipts/nfce
+Authorization: Bearer {{authTenantA.response.body.access_token}}
+X-Tenant-ID: {{tenantA}}
+Content-Type: application/json
+
+{
+  "access_key": "35261112345678000199650010000123451000123451",
+  "merchant_name": "CARREFOUR HIPERMERCADO LTDA",
+  "total_amount": "39.90",
+  "items": []
+}
+
+# ==============================================================================
+# JORNADA 5 — PIPELINE KAFKA, CATEGORIZACAO IA & INBOX ZERO ("OUTROS < 5%")
+# ==============================================================================
+
+### [J5-HAPPY-1] Consultar Fila Inbox Zero (< 5% Nao Categorizado)
+GET {{baseUrl}}/api/v1/inbox
+Authorization: Bearer {{authTenantA.response.body.access_token}}
+X-Tenant-ID: {{tenantA}}
+
+### [J5-HAPPY-2] Confirmar Sugestao de Categoria no Inbox Zero com Aprendizado de Regra
+POST {{baseUrl}}/api/v1/inbox/inbox-001/confirm
+Authorization: Bearer {{authTenantA.response.body.access_token}}
+X-Tenant-ID: {{tenantA}}
+Content-Type: application/json
+
+{
+  "approved_category_code": "ALIMENTACAO :: DELIVERY_APLICATIVOS",
+  "learn_rule": true
+}
+
+### [J5-SAD-1] Publicar Evento Malformado / Corrompido -> Roteado para Topico tx.dlq (202 Accepted)
+POST {{baseUrl}}/api/v1/inbox/dlq-test
+Authorization: Bearer {{authTenantA.response.body.access_token}}
+X-Tenant-ID: {{tenantA}}
+Content-Type: application/json
+
+{
+  "corrupted": true,
+  "raw_payload": "<<<INVALID_KAFKA_PROTO_STREAM>>>"
+}
+
+# ==============================================================================
+# JORNADA 6 — MOTOR DE PREVISIBILIDADE ("LIVRE PARA GASTAR") & SIMULADOR SAC/PRICE
+# ==============================================================================
+
+### [J6-HAPPY-1] Consultar "Livre para Gastar" (Horizonte MONTH / WEEK / TODAY)
+GET {{baseUrl}}/api/v1/dashboard/summary?horizon=MONTH&scope=FAMILY
+Authorization: Bearer {{authTenantA.response.body.access_token}}
+X-Tenant-ID: {{tenantA}}
+
+### [J6-HAPPY-2] Simular Amortizacao Extraordinaria SAC (Saldo R$ 320.000, Taxa 9.49% a.a., 240m, Extra R$ 50.000)
+POST {{baseUrl}}/api/v1/contracts/simulate
+Authorization: Bearer {{authTenantA.response.body.access_token}}
+X-Tenant-ID: {{tenantA}}
+Content-Type: application/json
+
+{
+  "contract_id": "fin-imob-sac-2026",
+  "amortization_system": "SAC",
+  "prepayment_strategy": "REDUCE_TERM",
+  "outstanding_balance": "320000.00",
+  "annual_interest_rate": "9.49",
+  "remaining_installments": 240,
+  "extra_amortization_amount": "50000.00"
+}
+
+### [J6-SAD-1] Simular Amortizacao Extra Maior que Saldo Devedor -> Esperado: 400 Bad Request
+POST {{baseUrl}}/api/v1/contracts/simulate
+Authorization: Bearer {{authTenantA.response.body.access_token}}
+X-Tenant-ID: {{tenantA}}
+Content-Type: application/json
+
+{
+  "contract_id": "fin-imob-sac-2026",
+  "amortization_system": "SAC",
+  "prepayment_strategy": "REDUCE_TERM",
+  "outstanding_balance": "320000.00",
+  "annual_interest_rate": "9.49",
+  "remaining_installments": 240,
+  "extra_amortization_amount": "400000.00"
+}
+
+### [J6-SAD-2] Simular Contrato com Prazo Zero (remaining_installments = 0) -> Esperado: 400 Bad Request
+POST {{baseUrl}}/api/v1/contracts/simulate
+Authorization: Bearer {{authTenantA.response.body.access_token}}
+X-Tenant-ID: {{tenantA}}
+Content-Type: application/json
+
+{
+  "contract_id": "fin-imob-sac-2026",
+  "amortization_system": "SAC",
+  "prepayment_strategy": "REDUCE_TERM",
+  "outstanding_balance": "320000.00",
+  "remaining_installments": 0,
+  "extra_amortization_amount": "10000.00"
+}
+
+# ==============================================================================
+# JORNADA 7 — GOVERNANCA FAMILIAR, TETO DE GASTOS & CRYPTO-SHREDDING LGPD
+# ==============================================================================
+
+### [J7-HAPPY-1] Configurar Teto Mensal (R$ 1.500,00 para Alimentacao Fora, Alerta 80%)
+POST {{baseUrl}}/api/v1/profile/budgets
+Authorization: Bearer {{authTenantA.response.body.access_token}}
+X-Tenant-ID: {{tenantA}}
+Content-Type: application/json
+
+{
+  "category_id": "alimentacao-fora",
+  "category_name": "Alimentacao Fora",
+  "monthly_cap": "1500.00",
+  "threshold_percentage": 80
+}
+
+### [J7-HAPPY-2] Convidar Membro Familiar (MEMBER com Alerta de Teto R$ 1.200,00)
+POST {{baseUrl}}/api/v1/profile/members
+Authorization: Bearer {{authTenantA.response.body.access_token}}
+X-Tenant-ID: {{tenantA}}
+Content-Type: application/json
+
+{
+  "email": "conjuge@pfmpulse.com.br",
+  "full_name": "Conjuge Dantas",
+  "role": "MEMBER",
+  "spending_allowance": "1200.00"
+}
+
+### [J7-HAPPY-3] Solicitar Exportacao de Portabilidade LGPD (Art. 18 V) -> Esperado: 202 Accepted
+POST {{baseUrl}}/api/v1/profile/export
+Authorization: Bearer {{authTenantA.response.body.access_token}}
+X-Tenant-ID: {{tenantA}}
+Content-Type: application/json
+
+{
+  "format": "JSON"
+}
+
+# ==============================================================================
+# JORNADA 8 — SAAS ADMIN BACKOFFICE & ZERO-TRUST PRIVACY (BLINDAGEM LGPD)
+# ==============================================================================
+
+### [J8-HAPPY-1] PLATFORM_ADMIN Lista Metadados Comerciais de Tenants -> Esperado: 200 OK
+GET {{baseUrl}}/api/v1/admin/tenants?page_size=20&status=ACTIVE
+Authorization: Bearer {{authPlatformAdmin.response.body.access_token}}
+
+### [J8-SAD-1] PLATFORM_ADMIN Tenta Ler Transacoes Financeiras Privadas -> Esperado: 403 Forbidden (Zero-Trust LGPD)
+GET {{baseUrl}}/api/v1/transactions
+Authorization: Bearer {{authPlatformAdmin.response.body.access_token}}
+X-Tenant-ID: {{tenantA}}
+
+### [J8-SAD-2] PLATFORM_ADMIN Tenta Ler Perfil Familiar Privado -> Esperado: 403 Forbidden (Zero-Trust LGPD)
+GET {{baseUrl}}/api/v1/profile
+Authorization: Bearer {{authPlatformAdmin.response.body.access_token}}
+X-Tenant-ID: {{tenantA}}
