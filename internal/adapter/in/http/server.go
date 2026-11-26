@@ -21,7 +21,13 @@ import (
 	"github.com/dantas-pfm/pfm-ingestion-bff-go/internal/adapter/out/sefaz"
 	"github.com/dantas-pfm/pfm-ingestion-bff-go/internal/application/port/in"
 	"github.com/dantas-pfm/pfm-ingestion-bff-go/internal/domain"
+	"github.com/dantas-pfm/pfm-ingestion-bff-go/internal/observability"
 	"github.com/shopspring/decimal"
+)
+
+const (
+	MaxStatementUploadBytes = 10 * 1024 * 1024 // 10 MB PDF upload limit (OWASP A04)
+	MaxJSONBodyBytes        = 1 * 1024 * 1024  // 1 MB JSON payload limit (OWASP A04)
 )
 
 var reUUID = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
@@ -200,10 +206,15 @@ func (s *Server) handleStatementUpload(w http.ResponseWriter, r *http.Request) {
 	password := r.Header.Get("X-Statement-Password")
 	secretName := r.Header.Get("X-Statement-Secret-Name")
 
-	rawBody, err := io.ReadAll(io.LimitReader(r.Body, 15*1024*1024+1))
+	r.Body = http.MaxBytesReader(w, r.Body, MaxStatementUploadBytes)
+	rawBody, err := io.ReadAll(r.Body)
 	if err != nil {
-		writeJSONWithETagAndCompression(w, r, http.StatusBadRequest, map[string]string{
-			"error": "failed to read statement stream into RAM buffer",
+		status := http.StatusBadRequest
+		if strings.Contains(err.Error(), "http: request body too large") {
+			status = http.StatusRequestEntityTooLarge
+		}
+		writeJSONWithETagAndCompression(w, r, status, map[string]string{
+			"error": "failed to read statement stream into RAM buffer (10MB max limit)",
 		})
 		return
 	}
@@ -387,6 +398,30 @@ func (s *Server) handleNfceReceiptUpload(w http.ResponseWriter, r *http.Request)
 
 func (s *Server) requireTenantID(w http.ResponseWriter, r *http.Request) (string, bool) {
 	tenantID := strings.TrimSpace(r.Header.Get("X-Tenant-ID"))
+	claims, _ := extractAuthClaims(r)
+	if claims != nil {
+		if claims.TenantID != "" && tenantID != "" && !strings.EqualFold(claims.TenantID, tenantID) {
+			writeJSONWithETagAndCompression(w, r, http.StatusForbidden, map[string]string{
+				"error": "forbidden: JWT claims.tenant_id does not match X-Tenant-ID header (OWASP A01 Zero-Trust)",
+			})
+			return "", false
+		}
+		if tenantID == "" && claims.TenantID != "" {
+			tenantID = claims.TenantID
+		}
+		if claims.Role == "VIEWER" && (r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch || r.Method == http.MethodDelete) {
+			writeJSONWithETagAndCompression(w, r, http.StatusForbidden, map[string]string{
+				"error": "forbidden: VIEWER role cannot perform write operations (OWASP A01 RBAC)",
+			})
+			return "", false
+		}
+	}
+	if !isLocalDevEnvironment() && strings.TrimSpace(r.Header.Get("Authorization")) == "" {
+		writeJSONWithETagAndCompression(w, r, http.StatusUnauthorized, map[string]string{
+			"error": "missing or invalid authorization header (Bearer token required in production)",
+		})
+		return "", false
+	}
 	if tenantID == "" || !reUUID.MatchString(tenantID) {
 		writeJSONWithETagAndCompression(w, r, http.StatusUnauthorized, map[string]string{
 			"error": "missing or invalid X-Tenant-ID UUID header (Zero-Trust ADR-006)",
@@ -439,13 +474,52 @@ func maskAuthorizationHeader(auth string) string {
 	return auth[:14] + "...[MASKED]"
 }
 
+func resolveCORSOrigin(r *http.Request) (string, bool) {
+	allowedRaw := strings.TrimSpace(os.Getenv("ALLOWED_ORIGINS"))
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if allowedRaw == "" {
+		if isLocalDevEnvironment() {
+			return "*", false
+		}
+		if origin != "" {
+			return origin, false
+		}
+		return "https://pfmpulse.com.br", false
+	}
+	for _, item := range strings.Split(allowedRaw, ",") {
+		candidate := strings.TrimSpace(item)
+		if candidate != "" && candidate != "*" && strings.EqualFold(candidate, origin) {
+			return candidate, true
+		}
+	}
+	first := strings.TrimSpace(strings.Split(allowedRaw, ",")[0])
+	if first == "*" && !isLocalDevEnvironment() {
+		return "https://pfmpulse.com.br", false
+	}
+	return first, false
+}
+
+func isRateLimitedEdgePath(path string) bool {
+	return strings.HasPrefix(path, "/api/v1/auth") ||
+		strings.HasPrefix(path, "/auth") ||
+		strings.HasPrefix(path, "/register") ||
+		strings.HasPrefix(path, "/verify") ||
+		strings.HasPrefix(path, "/api/v1/statements/upload")
+}
+
 func (s *Server) withMiddlewares(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		// Advertise HTTP/3 (QUIC) & HTTP/2 readiness per ADR-003 + CORS for pfm-web-nextjs (:3000)
+		// Advertise HTTP/3 (QUIC) & HTTP/2 readiness per ADR-003 + explicit CORS via ALLOWED_ORIGINS (OWASP A05)
 		w.Header().Set("Alt-Svc", `h3=":8443"; ma=86400, h2=":8443"; ma=86400`)
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("X-Frame-Options", "DENY")
+		corsOrigin, allowCreds := resolveCORSOrigin(r)
+		w.Header().Set("Access-Control-Allow-Origin", corsOrigin)
+		if allowCreds {
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.Header().Set("Vary", "Origin")
+		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization, X-Tenant-ID, If-None-Match, X-Statement-Issuer, X-Card-Last4, X-Statement-Password, X-Statement-Secret-Name, X-File-Name")
 		w.Header().Set("Access-Control-Expose-Headers", "ETag, Alt-Svc, Retry-After")
@@ -454,16 +528,32 @@ func (s *Server) withMiddlewares(next http.Handler) http.Handler {
 			return
 		}
 
+		// Edge Rate Limiting for /auth, /register, /verify, /statements/upload
+		if s.rateLimiter != nil && isRateLimitedEdgePath(r.URL.Path) && strings.TrimSpace(r.Header.Get("X-Tenant-ID")) == "" {
+			clientKey := "ip:" + r.RemoteAddr
+			if !s.rateLimiter.Allow(clientKey) {
+				w.Header().Set("Retry-After", "60")
+				writeJSONWithETagAndCompression(w, r, http.StatusTooManyRequests, map[string]string{
+					"error": "edge rate limit exceeded (OWASP A04)",
+				})
+				return
+			}
+		}
+
 		var reqPreview string
-		if r.Body != nil && !strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "application/pdf") && !strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "multipart/") {
-			bodyBytes, err := io.ReadAll(io.LimitReader(r.Body, 15*1024*1024+1))
+		isUploadStream := strings.HasPrefix(r.URL.Path, "/api/v1/statements/upload") ||
+			strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "application/pdf") ||
+			strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "multipart/")
+		if r.Body != nil && !isUploadStream {
+			r.Body = http.MaxBytesReader(w, r.Body, MaxJSONBodyBytes)
+			bodyBytes, err := io.ReadAll(r.Body)
 			if err == nil {
 				r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 				previewLen := len(bodyBytes)
 				if previewLen > 400 {
 					previewLen = 400
 				}
-				reqPreview = string(bodyBytes[:previewLen])
+				reqPreview = observability.MaskSensitivePII(string(bodyBytes[:previewLen]))
 			}
 		} else if r.Header.Get("X-File-Name") != "" {
 			reqPreview = "[BINARY_STREAM:" + r.Header.Get("X-File-Name") + "]"
@@ -503,7 +593,7 @@ func (s *Server) withMiddlewares(next http.Handler) http.Handler {
 			"payload_preview":          reqPreview,
 		}
 		if crw.statusCode >= 400 {
-			logEntry["error.stack"] = crw.respPreview.String()
+			logEntry["error.stack"] = observability.MaskSensitivePII(crw.respPreview.String())
 		}
 		if rawLog, err := json.Marshal(logEntry); err == nil {
 			_, _ = fmt.Fprintln(os.Stdout, string(rawLog))

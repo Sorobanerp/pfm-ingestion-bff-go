@@ -13,8 +13,10 @@ const DefaultOtlpEndpoint = "https://otel-collector.pfm.internal:4318"
 
 var (
 	reCPF        = regexp.MustCompile(`\b\d{3}\.?\d{3}\.?\d{3}-\d{2}\b|\b\d{11}\b`)
+	reCPFKV      = regexp.MustCompile(`(?i)("?cpf"?\s*[:=]\s*"?)([^"\s,}]+)("?)`)
 	rePAN        = regexp.MustCompile(`\b(?:\d[ -]*?){13,16}\b`)
-	rePasswordKV = regexp.MustCompile(`(?i)("?(?:pdf_?password|password)"?\s*[:=]\s*"?)([^"\s,}]+)("?)`)
+	reCardKV     = regexp.MustCompile(`(?i)("?(?:card_?number|pan)"?\s*[:=]\s*"?)([^"\s,}]+)("?)`)
+	rePasswordKV = regexp.MustCompile(`(?i)("?(?:pdf_?password|password|token|access_?token|refresh_?token|secret|api_?key|authorization)"?\s*[:=]\s*"?)([^"\s,}]+)("?)`)
 	reW3CTrace   = regexp.MustCompile(`^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$`)
 )
 
@@ -74,6 +76,8 @@ func MaskSensitivePII(raw string) string {
 		return ""
 	}
 	masked := rePasswordKV.ReplaceAllString(raw, "${1}[REDACTED]${3}")
+	masked = reCardKV.ReplaceAllString(masked, "${1}[PAN_MASKED]${3}")
+	masked = reCPFKV.ReplaceAllString(masked, "${1}[CPF_MASKED]${3}")
 	masked = rePAN.ReplaceAllString(masked, "[PAN_MASKED]")
 	masked = reCPF.ReplaceAllString(masked, "[CPF_MASKED]")
 	return masked

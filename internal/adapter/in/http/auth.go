@@ -18,7 +18,7 @@ type AuthClaims struct {
 
 func isLocalDevEnvironment() bool {
 	env := strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV")))
-	return env == "local" || env == "development"
+	return env == "" || env == "local" || env == "development"
 }
 
 func extractAuthClaims(r *http.Request) (*AuthClaims, error) {
@@ -133,9 +133,16 @@ func (s *Server) requireProfileUser(w http.ResponseWriter, r *http.Request) (*Au
 		}
 	}
 
+	headerTenantID := strings.TrimSpace(r.Header.Get("X-Tenant-ID"))
+	if claims.TenantID != "" && headerTenantID != "" && !strings.EqualFold(claims.TenantID, headerTenantID) {
+		writeJSONWithETagAndCompression(w, r, http.StatusForbidden, map[string]string{
+			"error": "forbidden: JWT claims.tenant_id does not match X-Tenant-ID header (OWASP A01 Zero-Trust)",
+		})
+		return nil, false
+	}
 	tenantID := claims.TenantID
 	if tenantID == "" {
-		tenantID = r.Header.Get("X-Tenant-ID")
+		tenantID = headerTenantID
 	}
 	if tenantID == "" || !reUUID.MatchString(tenantID) {
 		writeJSONWithETagAndCompression(w, r, http.StatusUnauthorized, map[string]string{

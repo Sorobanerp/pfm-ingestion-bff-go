@@ -425,18 +425,23 @@ func TestLocalCrudInboxNfceAndStatementValidation(t *testing.T) {
 	srvWithLedger.Handler().ServeHTTP(recDashWithLedger, reqDashWithLedger)
 	assert.Equal(t, http.StatusOK, recDashWithLedger.Code)
 
-	// 12. Cover JWT without sub for PLATFORM_ADMIN / VIEWER / Tenant B, plus local X-Tenant-ID fallback
-	for _, tok := range []string{
-		createTestJwt("", tenantA, "PLATFORM_ADMIN"),
-		createTestJwt("", tenantA, "VIEWER"),
-		createTestJwt("", tenantB, "OWNER"),
+	// 12. Cover JWT without sub for PLATFORM_ADMIN / VIEWER / Tenant B, plus cross-tenant mismatch 403 and local X-Tenant-ID fallback
+	for _, tc := range []struct {
+		tok    string
+		tenant string
+		code   int
+	}{
+		{createTestJwt("", tenantA, "PLATFORM_ADMIN"), tenantA, http.StatusOK},
+		{createTestJwt("", tenantA, "VIEWER"), tenantA, http.StatusOK},
+		{createTestJwt("", tenantB, "OWNER"), tenantB, http.StatusOK},
+		{createTestJwt("", tenantB, "OWNER"), tenantA, http.StatusForbidden},
 	} {
 		reqTok := httptest.NewRequest(http.MethodGet, "/api/v1/cards", nil)
-		reqTok.Header.Set("Authorization", "Bearer "+tok)
-		reqTok.Header.Set("X-Tenant-ID", tenantA)
+		reqTok.Header.Set("Authorization", "Bearer "+tc.tok)
+		reqTok.Header.Set("X-Tenant-ID", tc.tenant)
 		recTok := httptest.NewRecorder()
 		handler.ServeHTTP(recTok, reqTok)
-		assert.Equal(t, http.StatusOK, recTok.Code)
+		assert.Equal(t, tc.code, recTok.Code)
 	}
 
 	reqLocalNoAuth := httptest.NewRequest(http.MethodGet, "/api/v1/profile/budgets", nil)
