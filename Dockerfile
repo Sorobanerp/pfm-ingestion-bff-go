@@ -1,7 +1,7 @@
 # ============================================================================
 # Stage 1: Build Stage (Golang 1.24+)
 # ============================================================================
-FROM golang:1.24-bookworm AS builder
+FROM golang:1.26-bookworm AS builder
 WORKDIR /workspace
 
 COPY go.mod go.sum* ./

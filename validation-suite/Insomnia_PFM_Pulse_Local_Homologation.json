@@ -1,0 +1,1231 @@
+{
+  "_type": "export",
+  "__export_format": 4,
+  "__export_date": "2026-11-22T19:25:00.000Z",
+  "__export_source": "insomnia.desktop.app:v2023.5.8",
+  "resources": [
+    {
+      "_id": "wrk_pfm_pulse_local_homologation",
+      "parentId": null,
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "name": "PFM Pulse — Colecao Oficial de Homologacao Local E2E",
+      "description": "Colecao Oficial de Homologacao Local E2E do ecossistema PFM Pulse (HTTP/2 BFF :8080, Core Ledger gRPC :9090, Forecast Engine gRPC :9091, Kafka :9092 e PostgreSQL 16 RLS :5432).",
+      "scope": "collection",
+      "_type": "workspace"
+    },
+    {
+      "_id": "env_pfm_pulse_base",
+      "parentId": "wrk_pfm_pulse_local_homologation",
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "name": "Base Environment",
+      "data": {
+        "base_url": "http://localhost:8080",
+        "ledger_grpc_host": "localhost:9090",
+        "forecast_grpc_host": "localhost:9091",
+        "tenant_a_id": "11111111-1111-1111-1111-111111111111",
+        "tenant_b_id": "22222222-2222-2222-2222-222222222222",
+        "admin_token": "dev-admin-token",
+        "token_tenant_a": "dev-token-tenant-a",
+        "token_tenant_b": "dev-token-tenant-b",
+        "token_viewer_a": "dev-viewer-tenant-a",
+        "default_tx_id": "99999999-1111-4111-8111-000000000001"
+      },
+      "dataPropertyOrder": {
+        "&": [
+          "base_url",
+          "ledger_grpc_host",
+          "forecast_grpc_host",
+          "tenant_a_id",
+          "tenant_b_id",
+          "admin_token",
+          "token_tenant_a",
+          "token_tenant_b",
+          "token_viewer_a",
+          "default_tx_id"
+        ]
+      },
+      "color": null,
+      "isPrivate": false,
+      "metaSortKey": 1732303500000,
+      "_type": "environment"
+    },
+    {
+      "_id": "env_pfm_pulse_local_dev",
+      "parentId": "env_pfm_pulse_base",
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "name": "Local Dev - PFM Pulse",
+      "data": {
+        "base_url": "http://localhost:8080",
+        "ledger_grpc_host": "localhost:9090",
+        "forecast_grpc_host": "localhost:9091",
+        "tenant_a_id": "11111111-1111-1111-1111-111111111111",
+        "tenant_b_id": "22222222-2222-2222-2222-222222222222",
+        "admin_token": "dev-admin-token",
+        "token_tenant_a": "dev-token-tenant-a",
+        "token_tenant_b": "dev-token-tenant-b",
+        "token_viewer_a": "dev-viewer-tenant-a",
+        "default_tx_id": "99999999-1111-4111-8111-000000000001"
+      },
+      "dataPropertyOrder": {
+        "&": [
+          "base_url",
+          "ledger_grpc_host",
+          "forecast_grpc_host",
+          "tenant_a_id",
+          "tenant_b_id",
+          "admin_token",
+          "token_tenant_a",
+          "token_tenant_b",
+          "token_viewer_a",
+          "default_tx_id"
+        ]
+      },
+      "color": "#8CBA51",
+      "isPrivate": false,
+      "metaSortKey": 1732303500001,
+      "_type": "environment"
+    },
+    {
+      "_id": "fld_01_auth_rls",
+      "parentId": "wrk_pfm_pulse_local_homologation",
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "name": "Pasta 01 — Autenticacao, Tokens & Multi-Tenant RLS (US-12 / US-13)",
+      "description": "Onboarding de Tenants (Tenant A Familia Dantas e Tenant B Familia Visitante), emissao de JWT local e testes de bloqueio 401/403.",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": 100,
+      "_type": "request_group"
+    },
+    {
+      "_id": "req_01_1_create_tenant_a",
+      "parentId": "fld_01_auth_rls",
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "url": "{{ _.base_url }}/api/v1/admin/tenants",
+      "name": "01.1 [SUCESSO] Criar Tenant A (Familia Dantas) - SaaS Admin",
+      "description": "Registra o Tenant A (Familia Dantas) no SaaS Backoffice com isolamento PostgreSQL 16 RLS habilitado e chave KMS CMK.",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"tenant_id\": \"{{ _.tenant_a_id }}\",\n  \"tenant_name\": \"Familia Dantas\",\n  \"owner_email\": \"dantas@pfmpulse.com.br\",\n  \"plan\": \"FAMILY_PLUS\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.admin_token }}"
+        },
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 101,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_01_2_create_tenant_b",
+      "parentId": "fld_01_auth_rls",
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "url": "{{ _.base_url }}/api/v1/admin/tenants",
+      "name": "01.2 [SUCESSO] Criar Tenant B (Familia Visitante) - SaaS Admin",
+      "description": "Registra o Tenant B (Familia Visitante) para comprovar o isolamento estrito Row-Level Security (RLS) entre familias.",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"tenant_id\": \"{{ _.tenant_b_id }}\",\n  \"tenant_name\": \"Familia Visitante\",\n  \"owner_email\": \"visitante@pfmpulse.com.br\",\n  \"plan\": \"INDIVIDUAL_PRO\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.admin_token }}"
+        },
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 102,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_01_3_dev_token",
+      "parentId": "fld_01_auth_rls",
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "url": "{{ _.base_url }}/api/v1/auth/dev-token",
+      "name": "01.3 [SUCESSO] Gerar / Validar Sessao & Token JWT Local",
+      "description": "Gera um JWT local assinado com claims sub, tenant_id e role (OWNER, MEMBER, VIEWER ou PLATFORM_ADMIN).",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"tenant_id\": \"{{ _.tenant_a_id }}\",\n  \"tenant_name\": \"Familia Dantas\",\n  \"sub\": \"usr-dantas-owner\",\n  \"role\": \"OWNER\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 103,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_01_4_fail_401",
+      "parentId": "fld_01_auth_rls",
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "url": "{{ _.base_url }}/api/v1/dashboard/summary",
+      "name": "01.4 [FALHA - 401] Acesso sem Token / Sem X-Tenant-ID",
+      "description": "Valida que requisicoes sem cabecalho X-Tenant-ID valido sao rejeitadas imediatamente com HTTP 401 Unauthorized (Zero-Trust ADR-006).",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [],
+      "authentication": {},
+      "metaSortKey": 104,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_01_5_fail_403_viewer",
+      "parentId": "fld_01_auth_rls",
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "url": "{{ _.base_url }}/api/v1/transactions",
+      "name": "01.5 [FALHA - 403] Papel VIEWER tentando criar transacao",
+      "description": "Valida que um membro familiar com papel VIEWER pode consultar o dashboard mas recebe HTTP 403 Forbidden ao tentar criar ou alterar transacoes.",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"description\": \"TENTATIVA NAO AUTORIZADA VIEWER\",\n  \"amount\": \"150.00\",\n  \"currency\": \"BRL\",\n  \"category_code\": \"OUTROS\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.token_viewer_a }}"
+        },
+        {
+          "name": "X-Tenant-ID",
+          "value": "{{ _.tenant_a_id }}"
+        },
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 105,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "fld_02_crud_cards_tx",
+      "parentId": "wrk_pfm_pulse_local_homologation",
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "name": "Pasta 02 — CRUD Contas, Cartoes & Lancamento Rapido (UC-01 & UC-05)",
+      "description": "Cadastro de cartao de credito, compras a vista e parceladas 10x (RN02), isolamento RLS entre Tenant A e Tenant B, edicao e estorno na categoria original (RN03).",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": 200,
+      "_type": "request_group"
+    },
+    {
+      "_id": "req_02_1_create_card",
+      "parentId": "fld_02_crud_cards_tx",
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "url": "{{ _.base_url }}/api/v1/cards",
+      "name": "02.1 [SUCESSO] Cadastrar Cartao de Credito (Final 5285 - Limite R$ 15.000,00)",
+      "description": "Cadastra o cartao Itau Personnalite final 5285 com limite total de R$ 15.000,00 no Tenant A.",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"issuer\": \"ITAU\",\n  \"last4\": \"5285\",\n  \"credit_limit\": \"15000.00\",\n  \"currency\": \"BRL\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.token_tenant_a }}"
+        },
+        {
+          "name": "X-Tenant-ID",
+          "value": "{{ _.tenant_a_id }}"
+        },
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 201,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_02_2_create_spot_tx",
+      "parentId": "fld_02_crud_cards_tx",
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "url": "{{ _.base_url }}/api/v1/transactions",
+      "name": "02.2 [SUCESSO] Criar Lancamento a Vista (Supermercado Queiroz - R$ 189,40)",
+      "description": "Registra compra a vista de R$ 189,40 no Supermercado Queiroz para o Tenant A.",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"card_id\": \"card-5285-11111111\",\n  \"description\": \"SUPERMERCADO QUEIROZ\",\n  \"amount\": \"189.40\",\n  \"currency\": \"BRL\",\n  \"category_code\": \"ALIMENTACAO :: SUPERMERCADO\",\n  \"payment_method\": \"CREDIT_CARD\",\n  \"competence_month\": \"2026-11\",\n  \"installments\": 1\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.token_tenant_a }}"
+        },
+        {
+          "name": "X-Tenant-ID",
+          "value": "{{ _.tenant_a_id }}"
+        },
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 202,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_02_3_create_installment_tx",
+      "parentId": "fld_02_crud_cards_tx",
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "url": "{{ _.base_url }}/api/v1/transactions",
+      "name": "02.3 [SUCESSO] Criar Compra Parcelada 10x (R$ 3.500,00 -> 01/10 a 10/10)",
+      "description": "Registra compra parcelada em 10x de R$ 3.500,00 (10 parcelas de R$ 350,00), sensibilizando o limite do cartao pelo valor total e projetando as competencias futuras (RN02).",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"card_id\": \"card-5285-11111111\",\n  \"description\": \"APPLE STORE BRASIL MACBOOK\",\n  \"amount\": \"3500.00\",\n  \"currency\": \"BRL\",\n  \"category_code\": \"ESTILO_DE_VIDA :: ELETRONICOS\",\n  \"payment_method\": \"CREDIT_CARD\",\n  \"competence_month\": \"2026-11\",\n  \"installments\": 10\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.token_tenant_a }}"
+        },
+        {
+          "name": "X-Tenant-ID",
+          "value": "{{ _.tenant_a_id }}"
+        },
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 203,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_02_4_list_tx_tenant_a",
+      "parentId": "fld_02_crud_cards_tx",
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "url": "{{ _.base_url }}/api/v1/transactions",
+      "name": "02.4 [SUCESSO] Listar Extrato & Conferir Isolamento RLS (Tenant A ve tudo)",
+      "description": "Lista todas as transacoes dentro do escopo RLS do Tenant A (Familia Dantas).",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.token_tenant_a }}"
+        },
+        {
+          "name": "X-Tenant-ID",
+          "value": "{{ _.tenant_a_id }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 204,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_02_5_list_tx_tenant_b_rls",
+      "parentId": "fld_02_crud_cards_tx",
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "url": "{{ _.base_url }}/api/v1/transactions",
+      "name": "02.5 [FALHA - RLS] Tenant B tenta listar transacoes do Tenant A (Deve retornar 0 registros)",
+      "description": "Comprova que o Tenant B (Familia Visitante) recebe count: 0 e items: [] devido ao isolamento Row-Level Security.",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.token_tenant_b }}"
+        },
+        {
+          "name": "X-Tenant-ID",
+          "value": "{{ _.tenant_b_id }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 205,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_02_6_patch_tx",
+      "parentId": "fld_02_crud_cards_tx",
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "url": "{{ _.base_url }}/api/v1/transactions/{{ _.default_tx_id }}",
+      "name": "02.6 [SUCESSO] Atualizar Categoria / Descricao da Transacao (PATCH/PUT)",
+      "description": "Atualiza a categoria e descricao do primeiro lancamento criado no Tenant A.",
+      "method": "PATCH",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"description\": \"SUPERMERCADO QUEIROZ - FEIRA ORGANICA\",\n  \"category_code\": \"ALIMENTACAO :: FEIRA_E_HORTIFRUTI\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.token_tenant_a }}"
+        },
+        {
+          "name": "X-Tenant-ID",
+          "value": "{{ _.tenant_a_id }}"
+        },
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 206,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_02_7_refund_tx",
+      "parentId": "fld_02_crud_cards_tx",
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "url": "{{ _.base_url }}/api/v1/transactions/{{ _.default_tx_id }}/refund",
+      "name": "02.7 [SUCESSO] Registrar Estorno na Categoria Original (RN03)",
+      "description": "Gera um lancamento imutavel (append-only) de estorno (-R$ 189,40) exatamente na mesma categoria original da compra e recompoe o limite do cartao (RN03).",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"amount\": \"189.40\",\n  \"reason\": \"Estorno de cobranca duplicada na mesma categoria original (RN03)\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.token_tenant_a }}"
+        },
+        {
+          "name": "X-Tenant-ID",
+          "value": "{{ _.tenant_a_id }}"
+        },
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 207,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_02_8_fail_negative_or_zero_inst",
+      "parentId": "fld_02_crud_cards_tx",
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "url": "{{ _.base_url }}/api/v1/transactions",
+      "name": "02.8 [FALHA - 400/422] Compra com Valor Negativo ou Parcelas = 0",
+      "description": "Valida que o motor rejeita imediatamente valores negativos/zero ou numero de parcelas invalido com HTTP 400 Bad Request.",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"description\": \"LANCAMENTO INVALIDO VALOR NEGATIVO\",\n  \"amount\": \"-50.00\",\n  \"currency\": \"BRL\",\n  \"installments\": 0\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.token_tenant_a }}"
+        },
+        {
+          "name": "X-Tenant-ID",
+          "value": "{{ _.tenant_a_id }}"
+        },
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 208,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "fld_03_pdf_ram_checksum",
+      "parentId": "wrk_pfm_pulse_local_homologation",
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "name": "Pasta 03 — Ingestao de Fatura PDF em RAM & Checksum (UC-02)",
+      "description": "Processamento 100% em memoria volatil (RAM) com limpeza defer clear(rawBody) (ADR-006) e validacao matematica de soma de itens == total da fatura (RN04).",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": 300,
+      "_type": "request_group"
+    },
+    {
+      "_id": "req_03_1_upload_pdf_ram",
+      "parentId": "fld_03_pdf_ram_checksum",
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "url": "{{ _.base_url }}/api/v1/statements/upload",
+      "name": "03.1 [SUCESSO] Upload Multipart de Fatura PDF (Processamento 100% RAM)",
+      "description": "Envia a fatura Itau (R$ 750,90) processada 100% em RAM com checksum_diff: 0.00. Voce tambem pode trocar o Body para Multipart Form e anexar validation-suite/sample-fatura-itau.pdf.",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/pdf",
+        "text": "%PDF-1.4\nISSUER: ITAU | CARD: 5285 | REF: 2026-11 | DUE: 2026-11-28 | TOTAL: 750.90\n2026-11-05 | SUPERMERCADO PAO DE ACUCAR | 250.00\n2026-11-06 | APPLE STORE BRASIL 02/10 | 450.00\n2026-11-08 | DROGASIL FARMACIA | 41.00\n2026-11-10 | TARIFA ITAU AVISA SMS | 9.90\n%%EOF"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.token_tenant_a }}"
+        },
+        {
+          "name": "X-Tenant-ID",
+          "value": "{{ _.tenant_a_id }}"
+        },
+        {
+          "name": "X-Statement-Issuer",
+          "value": "ITAU"
+        },
+        {
+          "name": "X-Card-Last4",
+          "value": "5285"
+        },
+        {
+          "name": "X-File-Name",
+          "value": "sample-fatura-itau.pdf"
+        },
+        {
+          "name": "Content-Type",
+          "value": "application/pdf"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 301,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_03_2_upload_invalid_file",
+      "parentId": "fld_03_pdf_ram_checksum",
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "url": "{{ _.base_url }}/api/v1/statements/upload",
+      "name": "03.2 [FALHA - 400/415] Upload de Arquivo Invalido / Corrompido",
+      "description": "Rejeita arquivos executaveis (.exe / binario MZ) com HTTP 415 Unsupported Media Type antes de acionar o parser PDF.",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/x-msdownload",
+        "text": "MZ_CORRUPTED_OR_EXECUTABLE_BINARY_STREAM"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.token_tenant_a }}"
+        },
+        {
+          "name": "X-Tenant-ID",
+          "value": "{{ _.tenant_a_id }}"
+        },
+        {
+          "name": "X-File-Name",
+          "value": "fatura-falsa.exe"
+        },
+        {
+          "name": "Content-Type",
+          "value": "application/x-msdownload"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 302,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "fld_04_ai_inbox",
+      "parentId": "wrk_pfm_pulse_local_homologation",
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "name": "Pasta 04 — Triagem IA & Revisao Manual Inbox (UC-08 — Meta Outros < 5%)",
+      "description": "Consulta a fila Inbox Zero alimentada pelo pipeline de 3 camadas (Regex -> Historico pgvector -> Gemini Flash) e aprova sugestao com aprendizado.",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": 400,
+      "_type": "request_group"
+    },
+    {
+      "_id": "req_04_1_list_inbox",
+      "parentId": "fld_04_ai_inbox",
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "url": "{{ _.base_url }}/api/v1/inbox",
+      "name": "04.1 [SUCESSO] Listar Itens Pendentes na Inbox de Categorizacao IA",
+      "description": "Retorna os lancamentos pendentes de confirmacao do usuario e comprova uncategorized_ratio_pct = 2.40% (< 5.00%).",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.token_tenant_a }}"
+        },
+        {
+          "name": "X-Tenant-ID",
+          "value": "{{ _.tenant_a_id }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 401,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_04_2_confirm_inbox",
+      "parentId": "fld_04_ai_inbox",
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "url": "{{ _.base_url }}/api/v1/inbox/inbox-001/confirm",
+      "name": "04.2 [SUCESSO] Aprovar / Reclassificar Categoria de Transacao",
+      "description": "Confirma a sugestao de categoria para o item inbox-001 e grava regra aprendida para o tenant (learn_rule: true).",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"approved_category_code\": \"ALIMENTACAO :: DELIVERY_APLICATIVOS\",\n  \"learn_rule\": true\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.token_tenant_a }}"
+        },
+        {
+          "name": "X-Tenant-ID",
+          "value": "{{ _.tenant_a_id }}"
+        },
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 402,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "fld_05_nfce_inflation",
+      "parentId": "wrk_pfm_pulse_local_homologation",
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "name": "Pasta 05 — Cupom Fiscal NFC-e & Radar de Inflacao por Item/EAN (UC-03)",
+      "description": "Ingestao de notas fiscais SEFAZ (44 digitos), rastreamento de inflacao pessoal por codigo de barras EAN e bloqueio de duplicidade (409 Conflict).",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": 500,
+      "_type": "request_group"
+    },
+    {
+      "_id": "req_05_1_nfce_1",
+      "parentId": "fld_05_nfce_inflation",
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "url": "{{ _.base_url }}/api/v1/receipts/nfce",
+      "name": "05.1 [SUCESSO] Submeter NFC-e #1 (Azeite 500ml - R$ 39,90)",
+      "description": "Registra a primeira compra do SKU EAN 7891234567890 (Azeite Extra Virgem 500ml) ao preco unitario de R$ 39,90.",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"access_key\": \"35261112345678000199650010000123451000999001\",\n  \"merchant_name\": \"SUPERMERCADO QUEIROZ MATRIZ\",\n  \"total_amount\": \"39.90\",\n  \"items\": [\n    {\n      \"ean\": \"7891234567890\",\n      \"description\": \"AZEITE EXTRA VIRGEM PORTUGUES 500ML\",\n      \"quantity\": \"1.000\",\n      \"unit_price\": \"39.90\"\n    }\n  ]\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.token_tenant_a }}"
+        },
+        {
+          "name": "X-Tenant-ID",
+          "value": "{{ _.tenant_a_id }}"
+        },
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 501,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_05_2_nfce_2_inflation",
+      "parentId": "fld_05_nfce_inflation",
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "url": "{{ _.base_url }}/api/v1/receipts/nfce",
+      "name": "05.2 [SUCESSO] Submeter NFC-e #2 Mesmo EAN (Azeite 500ml - R$ 47,90 -> Alerta +20%)",
+      "description": "Registra nova nota fiscal com o mesmo EAN 7891234567890 a R$ 47,90 e dispara alerta PERSONAL_INFLATION_DETECTED (+20.05%).",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"access_key\": \"35261112345678000199650010000123451000999002\",\n  \"merchant_name\": \"PAO DE ACUCAR COMPASS\",\n  \"total_amount\": \"47.90\",\n  \"items\": [\n    {\n      \"ean\": \"7891234567890\",\n      \"description\": \"AZEITE EXTRA VIRGEM PORTUGUES 500ML\",\n      \"quantity\": \"1.000\",\n      \"unit_price\": \"47.90\"\n    }\n  ]\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.token_tenant_a }}"
+        },
+        {
+          "name": "X-Tenant-ID",
+          "value": "{{ _.tenant_a_id }}"
+        },
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 502,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_05_3_nfce_duplicate_409",
+      "parentId": "fld_05_nfce_inflation",
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "url": "{{ _.base_url }}/api/v1/receipts/nfce",
+      "name": "05.3 [FALHA - 409] Reenviar Mesma Chave NFC-e (Bloqueio Idempotencia)",
+      "description": "Tenta reenviar a mesma chave de acesso SEFAZ de 44 digitos da NFC-e #1 e recebe HTTP 409 Conflict.",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"access_key\": \"35261112345678000199650010000123451000999001\",\n  \"merchant_name\": \"SUPERMERCADO QUEIROZ MATRIZ\",\n  \"total_amount\": \"39.90\",\n  \"items\": []\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.token_tenant_a }}"
+        },
+        {
+          "name": "X-Tenant-ID",
+          "value": "{{ _.tenant_a_id }}"
+        },
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 503,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "fld_06_contracts_sac_price",
+      "parentId": "wrk_pfm_pulse_local_homologation",
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "name": "Pasta 06 — Simulador de Contratos 30 Anos SAC/Price & Consorcio (UC-04)",
+      "description": "Simulacao matematica em ponto fixo (shopspring/decimal) de amortizacao extraordinaria via HTTP BFF (:8080) e diretamente via gRPC (:9091).",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": 600,
+      "_type": "request_group"
+    },
+    {
+      "_id": "req_06_1_http_simulate_sac",
+      "parentId": "fld_06_contracts_sac_price",
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "url": "{{ _.base_url }}/api/v1/contracts/simulate",
+      "name": "06.1 [SUCESSO - HTTP] Simular Amortizacao Extraordinaria SAC (R$ 20.000,00)",
+      "description": "Simula amortizacao extraordinaria de R$ 20.000,00 sobre saldo devedor de R$ 320.000,00 (240 meses, SAC, REDUCE_TERM).",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"contract_id\": \"fin-imob-sac-2026\",\n  \"amortization_system\": \"SAC\",\n  \"prepayment_strategy\": \"REDUCE_TERM\",\n  \"outstanding_balance\": \"320000.00\",\n  \"annual_interest_rate\": \"9.49\",\n  \"remaining_installments\": 240,\n  \"extra_amortization_amount\": \"20000.00\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.token_tenant_a }}"
+        },
+        {
+          "name": "X-Tenant-ID",
+          "value": "{{ _.tenant_a_id }}"
+        },
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 601,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "greq_06_2_grpc_forecast",
+      "parentId": "fld_06_contracts_sac_price",
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "url": "{{ _.forecast_grpc_host }}",
+      "name": "06.2 [SUCESSO - gRPC] Chamada Direta gRPC ForecastService/SimulateAmortization (:9091)",
+      "description": "Invoca diretamente o servidor gRPC do pfm-forecast-engine-go na porta 9091 usando Server Reflection.",
+      "protoFileId": "",
+      "protoMethodName": "/pfm.v1.ForecastService/SimulateContractAmortization",
+      "body": {
+        "text": "{\n  \"tenant_id\": \"11111111-1111-1111-1111-111111111111\",\n  \"contract_id\": \"fin-imob-sac-2026\",\n  \"amortization_system\": \"AMORTIZATION_SYSTEM_SAC\",\n  \"prepayment_strategy\": \"PREPAYMENT_STRATEGY_REDUCE_TERM\",\n  \"outstanding_balance\": \"320000.00\",\n  \"remaining_installments\": 240,\n  \"monthly_interest_rate\": \"0.007586\",\n  \"extra_amortization_amount\": \"20000.00\",\n  \"currency\": \"BRL\"\n}"
+      },
+      "metadata": [],
+      "reflectionApi": {
+        "enabled": true,
+        "url": "{{ _.forecast_grpc_host }}",
+        "apiKey": "",
+        "module": ""
+      },
+      "metaSortKey": 602,
+      "isPrivate": false,
+      "_type": "grpc_request"
+    },
+    {
+      "_id": "req_06_3_fail_extra_gt_balance",
+      "parentId": "fld_06_contracts_sac_price",
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "url": "{{ _.base_url }}/api/v1/contracts/simulate",
+      "name": "06.3 [FALHA - 400] Amortizacao Maior que Saldo Devedor",
+      "description": "Valida que uma amortizacao extraordinaria (R$ 400.000,00) maior que o saldo devedor (R$ 320.000,00) retorna HTTP 400 Bad Request.",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"contract_id\": \"fin-imob-sac-2026\",\n  \"amortization_system\": \"SAC\",\n  \"prepayment_strategy\": \"REDUCE_TERM\",\n  \"outstanding_balance\": \"320000.00\",\n  \"annual_interest_rate\": \"9.49\",\n  \"remaining_installments\": 240,\n  \"extra_amortization_amount\": \"400000.00\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.token_tenant_a }}"
+        },
+        {
+          "name": "X-Tenant-ID",
+          "value": "{{ _.tenant_a_id }}"
+        },
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 603,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "fld_07_cockpit_horizons",
+      "parentId": "wrk_pfm_pulse_local_homologation",
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "name": "Pasta 07 — Cockpit Big Numbers & Ritmo Hoje/Semana/Mes (UC-06)",
+      "description": "Consulta o saldo Livre para Gastar nos 3 horizontes temporais (TODAY, WEEK, MONTH) em BRL (R$).",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": 700,
+      "_type": "request_group"
+    },
+    {
+      "_id": "req_07_1_summary_today",
+      "parentId": "fld_07_cockpit_horizons",
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "url": "{{ _.base_url }}/api/v1/dashboard/summary?horizon=TODAY&scope=FAMILY",
+      "name": "07.1 [SUCESSO] Resumo Executivo TODAY",
+      "description": "Retorna o cockpit executivo com foco na cota diaria (free_to_spend_today) da Familia Dantas.",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.token_tenant_a }}"
+        },
+        {
+          "name": "X-Tenant-ID",
+          "value": "{{ _.tenant_a_id }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 701,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_07_2_summary_week",
+      "parentId": "fld_07_cockpit_horizons",
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "url": "{{ _.base_url }}/api/v1/dashboard/summary?horizon=WEEK&scope=FAMILY",
+      "name": "07.2 [SUCESSO] Resumo Executivo WEEK",
+      "description": "Retorna o cockpit executivo com foco na cota semanal (free_to_spend_week) da Familia Dantas.",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.token_tenant_a }}"
+        },
+        {
+          "name": "X-Tenant-ID",
+          "value": "{{ _.tenant_a_id }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 702,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_07_3_summary_month",
+      "parentId": "fld_07_cockpit_horizons",
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "url": "{{ _.base_url }}/api/v1/dashboard/summary?horizon=MONTH&scope=FAMILY",
+      "name": "07.3 [SUCESSO] Resumo Executivo MONTH",
+      "description": "Retorna o cockpit executivo mensal completo (free_to_spend_month, cartoes ativos e projecao de caixa).",
+      "method": "GET",
+      "body": {},
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.token_tenant_a }}"
+        },
+        {
+          "name": "X-Tenant-ID",
+          "value": "{{ _.tenant_a_id }}"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 703,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "fld_08_family_budgets_lgpd",
+      "parentId": "wrk_pfm_pulse_local_homologation",
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "name": "Pasta 08 — Perfil Familiar, Tetos Orcamentarios & LGPD (UC-06 / US-13)",
+      "description": "Configuracao de teto mensal por categoria, portabilidade LGPD Art. 18 e consulta gRPC direta no Core Ledger Java 25 (:9090).",
+      "environment": {},
+      "environmentPropertyOrder": null,
+      "metaSortKey": 800,
+      "_type": "request_group"
+    },
+    {
+      "_id": "req_08_1_set_budget",
+      "parentId": "fld_08_family_budgets_lgpd",
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "url": "{{ _.base_url }}/api/v1/profile/budgets",
+      "name": "08.1 [SUCESSO] Configurar Teto Orcamentario Mensal por Categoria",
+      "description": "Configura teto mensal de R$ 1.500,00 para Alimentacao Fora com gatilho de alerta em 80%.",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"category_id\": \"alimentacao-fora\",\n  \"category_name\": \"Alimentacao Fora\",\n  \"monthly_cap\": \"1500.00\",\n  \"threshold_percentage\": 80\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.token_tenant_a }}"
+        },
+        {
+          "name": "X-Tenant-ID",
+          "value": "{{ _.tenant_a_id }}"
+        },
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 801,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "req_08_2_export_lgpd",
+      "parentId": "fld_08_family_budgets_lgpd",
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "url": "{{ _.base_url }}/api/v1/profile/export",
+      "name": "08.2 [SUCESSO] Solicitar Exportacao de Dados Pessoais (LGPD Art. 18)",
+      "description": "Dispara a exportacao assincrona de portabilidade de dados pessoais da Familia Dantas (HTTP 202 Accepted).",
+      "method": "POST",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"format\": \"JSON\"\n}"
+      },
+      "parameters": [],
+      "headers": [
+        {
+          "name": "Authorization",
+          "value": "Bearer {{ _.token_tenant_a }}"
+        },
+        {
+          "name": "X-Tenant-ID",
+          "value": "{{ _.tenant_a_id }}"
+        },
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "authentication": {},
+      "metaSortKey": 802,
+      "isPrivate": false,
+      "settingStoreCookies": true,
+      "settingSendCookies": true,
+      "settingDisableRenderRequestBody": false,
+      "settingEncodeUrl": true,
+      "settingRebuildPath": true,
+      "settingFollowRedirects": "global",
+      "_type": "request"
+    },
+    {
+      "_id": "greq_08_3_grpc_core_ledger",
+      "parentId": "fld_08_family_budgets_lgpd",
+      "modified": 1732303500000,
+      "created": 1732303500000,
+      "url": "{{ _.ledger_grpc_host }}",
+      "name": "08.3 [SUCESSO - gRPC] Consulta Direta Double-Entry no Core Ledger (:9090)",
+      "description": "Invoca diretamente o servidor gRPC do pfm-core-ledger-java (Java 25 LTS) na porta 9090 via Server Reflection.",
+      "protoFileId": "",
+      "protoMethodName": "/pfm.v1.CoreLedgerService/GetTenantFinancialSummary",
+      "body": {
+        "text": "{\n  \"tenant_id\": \"11111111-1111-1111-1111-111111111111\",\n  \"reference_month\": \"2026-11\"\n}"
+      },
+      "metadata": [],
+      "reflectionApi": {
+        "enabled": true,
+        "url": "{{ _.ledger_grpc_host }}",
+        "apiKey": "",
+        "module": ""
+      },
+      "metaSortKey": 803,
+      "isPrivate": false,
+      "_type": "grpc_request"
+    }
+  ]
+}

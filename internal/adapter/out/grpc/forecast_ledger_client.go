@@ -5,17 +5,34 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/shopspring/decimal"
+	"github.com/sony/gobreaker"
 )
 
-const DefaultGrpcClientTimeout = 3 * time.Second
+const (
+	DefaultGrpcClientTimeout = 3 * time.Second
+	DefaultMaxIdempotentRetries = 2
+)
 
 var ErrEastWestCircuitOpen = errors.New("east-west gRPC client circuit breaker is OPEN")
+
+// UpstreamHTTPError preserves 4xx client errors from East-West services
+// so the BFF does not mask them as 500/502.
+type UpstreamHTTPError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *UpstreamHTTPError) Error() string {
+	return fmt.Sprintf("upstream returned status %d: %s", e.StatusCode, e.Message)
+}
 
 type ContractSimulateRequest struct {
 	TenantID                string `json:"tenant_id"`
@@ -36,6 +53,7 @@ type EastWestGrpcBridgeClient struct {
 	coreLedgerURL     string
 	forecastEngineURL string
 	httpClient        *http.Client
+	cb                *gobreaker.CircuitBreaker
 	mu                sync.Mutex
 	failures          int
 	state             string
@@ -43,12 +61,27 @@ type EastWestGrpcBridgeClient struct {
 }
 
 func NewEastWestGrpcBridgeClient(coreLedgerURL, forecastEngineURL string) *EastWestGrpcBridgeClient {
+	cb := gobreaker.NewCircuitBreaker(gobreaker.Settings{
+		Name:        "east-west-core-ledger",
+		MaxRequests: 2,
+		Interval:    30 * time.Second,
+		Timeout:     15 * time.Second,
+		ReadyToTrip: func(counts gobreaker.Counts) bool {
+			return counts.ConsecutiveFailures >= 3
+		},
+	})
 	return &EastWestGrpcBridgeClient{
 		coreLedgerURL:     strings.TrimRight(coreLedgerURL, "/"),
 		forecastEngineURL: strings.TrimRight(forecastEngineURL, "/"),
 		httpClient:        &http.Client{Timeout: DefaultGrpcClientTimeout},
+		cb:                cb,
 		state:             "CLOSED",
 	}
+}
+
+// CircuitState returns the current gobreaker circuit breaker state.
+func (c *EastWestGrpcBridgeClient) CircuitState() gobreaker.State {
+	return c.cb.State()
 }
 
 func (c *EastWestGrpcBridgeClient) FetchDashboardSummary(
@@ -194,6 +227,236 @@ func (c *EastWestGrpcBridgeClient) SimulateContract(
 		"installments_reduced":    installmentsReduced,
 		"interest_savings_amount": savings.StringFixed(4),
 	}, nil
+}
+
+func (c *EastWestGrpcBridgeClient) callCoreLedgerJson(
+	ctx context.Context,
+	endpoint string,
+	tenantID string,
+	reqBody any,
+) (map[string]any, error) {
+	if c.isCircuitOpen() {
+		return nil, ErrEastWestCircuitOpen
+	}
+	if c.coreLedgerURL == "" {
+		return map[string]any{"status": "MOCK_SUCCESS", "endpoint": endpoint}, nil
+	}
+
+	var rawBody []byte
+	if reqBody != nil {
+		raw, err := json.Marshal(reqBody)
+		if err != nil {
+			return nil, err
+		}
+		rawBody = raw
+	}
+
+	out, err := c.cb.Execute(func() (any, error) {
+		var lastErr error
+		for attempt := 0; attempt <= DefaultMaxIdempotentRetries; attempt++ {
+			var bodyReader io.Reader
+			if rawBody != nil {
+				bodyReader = bytes.NewReader(rawBody)
+			}
+
+			reqCtx, cancel := context.WithTimeout(ctx, DefaultGrpcClientTimeout)
+			httpReq, reqErr := http.NewRequestWithContext(
+				reqCtx,
+				http.MethodPost,
+				c.coreLedgerURL+endpoint,
+				bodyReader,
+			)
+			if reqErr != nil {
+				cancel()
+				return nil, reqErr
+			}
+			httpReq.Header.Set("Content-Type", "application/json")
+			if tenantID != "" {
+				httpReq.Header.Set("X-Tenant-ID", tenantID)
+			}
+
+			resp, doErr := c.httpClient.Do(httpReq)
+			cancel()
+			if doErr != nil {
+				lastErr = doErr
+				time.Sleep(time.Duration(attempt+1) * 15 * time.Millisecond)
+				continue
+			}
+
+			if resp.StatusCode >= 500 {
+				var errMap map[string]any
+				_ = json.NewDecoder(resp.Body).Decode(&errMap)
+				_ = resp.Body.Close()
+				lastErr = fmt.Errorf("core ledger returned status %d: %v", resp.StatusCode, errMap)
+				time.Sleep(time.Duration(attempt+1) * 15 * time.Millisecond)
+				continue
+			}
+			if resp.StatusCode >= 400 {
+				rawErr, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+				_ = resp.Body.Close()
+				msg := strings.TrimSpace(string(rawErr))
+				var errMap map[string]any
+				if json.Unmarshal(rawErr, &errMap) == nil {
+					if m, ok := errMap["error"].(string); ok && m != "" {
+						msg = m
+					} else if m, ok := errMap["message"].(string); ok && m != "" {
+						msg = m
+					}
+				}
+				if msg == "" {
+					msg = http.StatusText(resp.StatusCode)
+				}
+				return nil, &UpstreamHTTPError{StatusCode: resp.StatusCode, Message: msg}
+			}
+
+			var result map[string]any
+			decodeErr := json.NewDecoder(resp.Body).Decode(&result)
+			_ = resp.Body.Close()
+			if decodeErr != nil {
+				return map[string]any{"status": "SUCCESS"}, nil
+			}
+			return result, nil
+		}
+		return nil, lastErr
+	})
+	if err != nil {
+		if errors.Is(err, gobreaker.ErrOpenState) || errors.Is(err, gobreaker.ErrTooManyRequests) {
+			return nil, ErrEastWestCircuitOpen
+		}
+		return nil, err
+	}
+	return out.(map[string]any), nil
+}
+
+func (c *EastWestGrpcBridgeClient) ListTenants(ctx context.Context, pageSize int, pageToken, statusFilter, planFilter string) (map[string]any, error) {
+	body := map[string]any{
+		"pageSize":     pageSize,
+		"pageToken":    pageToken,
+		"statusFilter": statusFilter,
+		"planFilter":   planFilter,
+	}
+	res, err := c.callCoreLedgerJson(ctx, "/pfm.v1.TenantAdminService/ListTenants", "", body)
+	if err != nil && errors.Is(err, ErrEastWestCircuitOpen) {
+		return map[string]any{"tenants": []any{}, "totalCount": 0}, nil
+	}
+	return res, err
+}
+
+func (c *EastWestGrpcBridgeClient) CreateTenant(ctx context.Context, tenantID, tenantName, ownerEmail, plan string) (map[string]any, error) {
+	body := map[string]any{
+		"tenantId":   tenantID,
+		"tenantName": tenantName,
+		"ownerEmail": ownerEmail,
+		"plan":       plan,
+	}
+	return c.callCoreLedgerJson(ctx, "/pfm.v1.TenantAdminService/CreateTenant", tenantID, body)
+}
+
+func (c *EastWestGrpcBridgeClient) ChangeTenantPlan(ctx context.Context, tenantID, newPlan string) (map[string]any, error) {
+	body := map[string]any{
+		"tenantId": tenantID,
+		"newPlan":  newPlan,
+	}
+	return c.callCoreLedgerJson(ctx, "/pfm.v1.TenantAdminService/ChangeTenantPlan", tenantID, body)
+}
+
+func (c *EastWestGrpcBridgeClient) UpdateSubscriptionStatus(ctx context.Context, tenantID, newStatus, reason string) (map[string]any, error) {
+	body := map[string]any{
+		"tenantId":  tenantID,
+		"newStatus": newStatus,
+		"reason":    reason,
+	}
+	return c.callCoreLedgerJson(ctx, "/pfm.v1.TenantAdminService/UpdateSubscriptionStatus", tenantID, body)
+}
+
+func (c *EastWestGrpcBridgeClient) GetPlatformMetrics(ctx context.Context, period string) (map[string]any, error) {
+	body := map[string]any{"period": period}
+	return c.callCoreLedgerJson(ctx, "/pfm.v1.TenantAdminService/GetPlatformMetrics", "", body)
+}
+
+func (c *EastWestGrpcBridgeClient) GetUserProfile(ctx context.Context, tenantID, userSubject string) (map[string]any, error) {
+	body := map[string]any{
+		"tenantId":    tenantID,
+		"userSubject": userSubject,
+	}
+	return c.callCoreLedgerJson(ctx, "/pfm.v1.UserProfileService/GetUserProfile", tenantID, body)
+}
+
+func (c *EastWestGrpcBridgeClient) UpdateUserProfile(ctx context.Context, tenantID, userSubject, fullName string) (map[string]any, error) {
+	body := map[string]any{
+		"tenantId":    tenantID,
+		"userSubject": userSubject,
+		"fullName":    fullName,
+	}
+	return c.callCoreLedgerJson(ctx, "/pfm.v1.UserProfileService/UpdateUserProfile", tenantID, body)
+}
+
+func (c *EastWestGrpcBridgeClient) ListFamilyMembers(ctx context.Context, tenantID string) (map[string]any, error) {
+	body := map[string]any{"tenantId": tenantID}
+	return c.callCoreLedgerJson(ctx, "/pfm.v1.UserProfileService/ListFamilyMembers", tenantID, body)
+}
+
+func (c *EastWestGrpcBridgeClient) InviteFamilyMember(ctx context.Context, tenantID, email, fullName, role, allowance string) (map[string]any, error) {
+	body := map[string]any{
+		"tenantId":          tenantID,
+		"email":             email,
+		"fullName":          fullName,
+		"role":              role,
+		"spendingAllowance": allowance,
+	}
+	return c.callCoreLedgerJson(ctx, "/pfm.v1.UserProfileService/InviteFamilyMember", tenantID, body)
+}
+
+func (c *EastWestGrpcBridgeClient) RemoveFamilyMember(ctx context.Context, tenantID, memberID string) (map[string]any, error) {
+	body := map[string]any{
+		"tenantId": tenantID,
+		"memberId": memberID,
+	}
+	return c.callCoreLedgerJson(ctx, "/pfm.v1.UserProfileService/RemoveFamilyMember", tenantID, body)
+}
+
+func (c *EastWestGrpcBridgeClient) GetCategoryBudgets(ctx context.Context, tenantID string) (map[string]any, error) {
+	body := map[string]any{"tenantId": tenantID}
+	return c.callCoreLedgerJson(ctx, "/pfm.v1.UserProfileService/GetCategoryBudgets", tenantID, body)
+}
+
+func (c *EastWestGrpcBridgeClient) SetCategoryBudget(ctx context.Context, tenantID, categoryID, categoryName, monthlyCap string, threshold int) (map[string]any, error) {
+	body := map[string]any{
+		"tenantId":            tenantID,
+		"categoryId":          categoryID,
+		"categoryName":        categoryName,
+		"monthlyCap":          monthlyCap,
+		"thresholdPercentage": threshold,
+	}
+	return c.callCoreLedgerJson(ctx, "/pfm.v1.UserProfileService/SetCategoryBudget", tenantID, body)
+}
+
+func (c *EastWestGrpcBridgeClient) SetCardPdfPassword(ctx context.Context, tenantID, cardID, password string) (map[string]any, error) {
+	body := map[string]any{
+		"tenantId": tenantID,
+		"cardId":   cardID,
+		"password": password,
+	}
+	return c.callCoreLedgerJson(ctx, "/pfm.v1.UserProfileService/SetCardPdfPassword", tenantID, body)
+}
+
+func (c *EastWestGrpcBridgeClient) ExportUserData(ctx context.Context, tenantID, userID, format string) (map[string]any, error) {
+	body := map[string]any{
+		"tenantId": tenantID,
+		"userId":   userID,
+		"format":   format,
+	}
+	return c.callCoreLedgerJson(ctx, "/pfm.v1.UserProfileService/ExportUserData", tenantID, body)
+}
+
+func (c *EastWestGrpcBridgeClient) RequestCryptoShredding(ctx context.Context, tenantID, userID, phrase, mfa string) (map[string]any, error) {
+	body := map[string]any{
+		"tenantId":           tenantID,
+		"userId":             userID,
+		"confirmationPhrase": phrase,
+		"mfaToken":           mfa,
+	}
+	return c.callCoreLedgerJson(ctx, "/pfm.v1.UserProfileService/RequestCryptoShredding", tenantID, body)
 }
 
 func (c *EastWestGrpcBridgeClient) isCircuitOpen() bool {
